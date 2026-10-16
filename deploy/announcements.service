@@ -1,0 +1,30 @@
+[Unit]
+Description=Announcements — alertas de directos de Twitch en Discord
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=180
+StartLimitBurst=15
+
+[Service]
+Type=simple
+User=cultofskaro
+Group=cultofskaro
+WorkingDirectory=/srv/services/announcements
+Environment=HOME=/home/cultofskaro
+# El lanzador carga /srv/services/announcements/.env (tokens y configuración).
+ExecStart=/home/cultofskaro/.secrets/bin/run srv:announcements -- /usr/bin/node dist/index.js
+Restart=always
+RestartSec=15
+UMask=0077
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=announcements
+
+LimitNOFILE=65536
+MemoryMax=512M
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

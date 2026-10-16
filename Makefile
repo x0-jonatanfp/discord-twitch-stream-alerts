@@ -1,0 +1,50 @@
+NAME := announcements
+DEST := /srv/services/$(NAME)
+SERVICE := $(NAME)
+SYSTEMD_UNIT := /etc/systemd/system/$(SERVICE).service
+DEPLOY_USER := cultofskaro
+DEPLOY_GROUP := cultofskaro
+
+.PHONY: build check typecheck test install deploy restart status logs
+
+build:
+	pnpm build
+
+check: typecheck test build
+
+typecheck:
+	pnpm typecheck
+
+test:
+	pnpm test
+
+# Instalacion inicial: prepara el destino e instala la unidad, pero no la habilita
+# ni la arranca. El deploy la activa cuando ya existe el .env de produccion.
+install:
+	sudo install -d -o $(DEPLOY_USER) -g $(DEPLOY_GROUP) -m 0750 $(DEST) $(DEST)/dist $(DEST)/config
+	sudo install -m 0644 deploy/$(SERVICE).service $(SYSTEMD_UNIT)
+	sudo systemctl daemon-reload
+	if test ! -f $(DEST)/config/guilds.json; then install -o $(DEPLOY_USER) -g $(DEPLOY_GROUP) -m 0600 config/guilds.json $(DEST)/config/guilds.json; fi
+
+# Solo sincroniza el bundle y manifiestos. Nunca copia el .env.
+# Preserva config/guilds.json y exige secretos de produccion preparados aparte.
+deploy: build
+	test -f $(DEST)/.env || { echo "falta $(DEST)/.env; prepara los secretos de produccion antes del deploy"; exit 1; }
+	test -f $(DEST)/config/guilds.json || { echo "falta $(DEST)/config/guilds.json; ejecuta make install o prepara la configuracion"; exit 1; }
+	test -f $(SYSTEMD_UNIT) || { echo "falta $(SYSTEMD_UNIT); ejecuta make install"; exit 1; }
+	test -d $(DEST)/dist || install -d -m 0750 $(DEST)/dist
+	rsync -av --delete dist/ $(DEST)/dist/
+	install -m 0644 package.json pnpm-lock.yaml pnpm-workspace.yaml $(DEST)/
+	cd $(DEST) && pnpm install --prod --frozen-lockfile
+	sudo systemctl enable $(SERVICE).service
+	sudo systemctl restart $(SERVICE).service
+	systemctl is-active --quiet $(SERVICE).service
+
+restart:
+	sudo systemctl restart $(SERVICE).service
+
+status:
+	systemctl status $(SERVICE).service --no-pager
+
+logs:
+	journalctl -u $(SERVICE).service -n 50 -f
