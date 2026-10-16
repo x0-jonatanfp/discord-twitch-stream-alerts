@@ -1,0 +1,35 @@
+{
+  "name": "discord-twitch-stream-alerts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Multi-guild Discord bot for Twitch live notifications",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "auth:twitch": "tsx src/infrastructure/twitch/oauth-setup.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "discord.js": "^14.27.0",
+    "dotenv": "^17.4.2",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.18.2",
+    "@vitest/coverage-v8": "^3.2.4",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

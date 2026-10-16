@@ -1,0 +1,28 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+.twitch-cli.env
+secrets/
+*.token
+*.refresh-token
+
+# Per-host guild/channel configuration and runtime state
+/config/guilds.json
+/data/
+/logs/
+*.log
+
+# Dependencies, build output, and coverage
+/node_modules/
+/dist/
+/coverage/
+
+# Local editor and operating-system files
+.DS_Store
+.vscode/
+.idea/
+
+# Local tooling and working plans
+/.engram/
+/.goal/

@@ -1,0 +1,14 @@
+{
+  "guilds": [
+    {
+      "guildId": "123456789012345678",
+      "alertChannelId": "234567890123456789",
+      "twitchChannels": ["example_streamer", "another_streamer"]
+    },
+    {
+      "guildId": "345678901234567890",
+      "alertChannelId": "456789012345678901",
+      "twitchChannels": ["another_streamer"]
+    }
+  ]
+}
