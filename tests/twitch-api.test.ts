@@ -46,22 +46,13 @@ describe("TwitchApi", () => {
     expect(firstInit?.headers).toMatchObject({ Authorization: "Bearer access-old", "Client-Id": "client-id" });
   });
 
-  it("throws clear error when a Twitch login cannot be resolved", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ data: [] })));
-    await expect(new TwitchApi(config).resolveChannels(["missing"])).rejects.toThrow(/Unknown Twitch channel/);
-  });
-
-  it("loads an offline channel profile with its real avatar and Twitch link", async () => {
-    const fetchMock = vi.fn(async (_input: URL | RequestInfo, _init?: RequestInit) => jsonResponse({ data: [
-      { id: "101", login: "One", display_name: "OneName", profile_image_url: "https://images.example/one.png" },
-    ] }));
-    vi.stubGlobal("fetch", fetchMock);
-    const api = new TwitchApi(config);
-    await expect(api.getChannelProfile("101")).resolves.toEqual({
-      id: "101", login: "one", displayName: "OneName", profileImageUrl: "https://images.example/one.png",
-      url: "https://www.twitch.tv/One", isLive: false,
-    });
-    expect(new URL(String(fetchMock.mock.calls[0]?.[0])).searchParams.get("id")).toBe("101");
+  it("returns only resolved channels instead of failing on unknown logins", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ data: [
+      { id: "101", login: "one", display_name: "One", profile_image_url: "https://images.example/one.png" },
+    ] })));
+    await expect(new TwitchApi(config).resolveChannels(["one", "renamed_away"])).resolves.toEqual([
+      { id: "101", login: "one", displayName: "One", profileImageUrl: "https://images.example/one.png", url: "https://www.twitch.tv/one" },
+    ]);
   });
 
   it("creates stream.online EventSub subscriptions against the WebSocket session", async () => {
@@ -77,6 +68,11 @@ describe("TwitchApi", () => {
         transport: { method: "websocket", session_id: "session-1" },
       }),
     }));
+  });
+
+  it("treats a duplicate EventSub subscription as success", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 409 })));
+    await expect(new TwitchApi(config).subscribeToOnline("broadcaster-1", "session-1")).resolves.toBeUndefined();
   });
 
   it("queries streams by broadcaster IDs and maps response to domain streams", async () => {
@@ -134,7 +130,38 @@ describe("TwitchApi", () => {
 
   it("does not expose API response bodies in errors", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("private-token-leak", { status: 500 })));
-    await expect(new TwitchApi(config).getLiveStreams(["101"])).rejects.toThrow(/HTTP 500/);
-    await expect(new TwitchApi(config).getLiveStreams(["101"])).rejects.not.toThrow(/private-token-leak/);
+    await expect(new TwitchApi(config, { maxRetries: 0 }).getLiveStreams(["101"])).rejects.toThrow(/HTTP 500/);
+    await expect(new TwitchApi(config, { maxRetries: 0 }).getLiveStreams(["101"])).rejects.not.toThrow(/private-token-leak/);
+  });
+
+  it("retries transient 5xx responses before failing", async () => {
+    const fetchMock = vi.fn((_input: URL | RequestInfo, _init?: RequestInit) => Promise.resolve(new Response("", { status: 500 })))
+      .mockResolvedValueOnce(new Response("", { status: 500 }))
+      .mockResolvedValueOnce(new Response("", { status: 503 }))
+      .mockResolvedValueOnce(jsonResponse({ data: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new TwitchApi(config, { maxRetries: 2, retryDelayMs: 1 });
+    await expect(api.getLiveStreams(["101"])).resolves.toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("honors Retry-After when Twitch answers 429", async () => {
+    const fetchMock = vi.fn((_input: URL | RequestInfo, _init?: RequestInit) => Promise.resolve(jsonResponse({ data: [] })))
+      .mockResolvedValueOnce(new Response("", { status: 429, headers: { "retry-after": "0" } }))
+      .mockResolvedValueOnce(jsonResponse({ data: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new TwitchApi(config, { maxRetries: 1, retryDelayMs: 60_000 });
+    await expect(api.getLiveStreams(["101"])).resolves.toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries network failures and surfaces the last error", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const api = new TwitchApi(config, { maxRetries: 1, retryDelayMs: 1 });
+    await expect(api.getLiveStreams(["101"])).rejects.toThrow("fetch failed");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

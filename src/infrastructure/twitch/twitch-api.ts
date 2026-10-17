@@ -1,5 +1,5 @@
 import type { AppConfig } from "../config/env.js";
-import type { ChannelProfile, LiveStream, TwitchChannel } from "../../domain/entities/stream.js";
+import type { LiveStream, TwitchChannel } from "../../domain/entities/stream.js";
 import type { TwitchStreamsPort } from "../../domain/ports/twitch-streams.js";
 import { saveTwitchTokens } from "./token-store.js";
 
@@ -34,17 +34,28 @@ export class TwitchApiError extends Error {
   }
 }
 
+export interface TwitchApiOptions {
+  /** Extra attempts after the first one for transient failures (default 2). */
+  maxRetries?: number;
+  /** Base delay for the exponential backoff in milliseconds (default 1000). */
+  retryDelayMs?: number;
+}
+
 export class TwitchApi implements TwitchStreamsPort {
   private accessToken: string;
   private refreshToken: string;
   private refreshPromise: Promise<void> | null = null;
   private tokenExpiresAt: number | null;
   private readonly profileImageById = new Map<string, string>();
+  private readonly maxRetries: number;
+  private readonly retryDelayMs: number;
 
-  constructor(private readonly config: AppConfig) {
+  constructor(private readonly config: AppConfig, options: TwitchApiOptions = {}) {
     this.accessToken = config.twitchUserAccessToken;
     this.refreshToken = config.twitchRefreshToken;
     this.tokenExpiresAt = config.twitchUserTokenExpiresAt;
+    this.maxRetries = Math.max(0, options.maxRetries ?? 2);
+    this.retryDelayMs = Math.max(0, options.retryDelayMs ?? 1_000);
   }
 
   get currentAccessToken(): string {
@@ -70,42 +81,29 @@ export class TwitchApi implements TwitchStreamsPort {
         };
       }));
     }
-    const resolvedLogins = new Set(results.map((channel) => channel.login));
-    const unknownLogins = uniqueLogins.filter((login) => !resolvedLogins.has(login));
-    if (unknownLogins.length > 0) {
-      throw new Error(`Unknown Twitch channel login(s): ${unknownLogins.join(", ")}`);
-    }
+    // Unknown logins are returned to the caller instead of aborting all
+    // monitoring. A renamed or deleted channel must not disable other channels.
     return results;
   }
 
-  async getChannelProfile(broadcasterId: string): Promise<ChannelProfile> {
-    const url = new URL("https://api.twitch.tv/helix/users");
-    url.searchParams.set("id", broadcasterId);
-    const { data } = await this.request<TwitchUserResponse>(url);
-    const user = data[0];
-    if (!user) throw new Error(`Unknown Twitch broadcaster ID ${broadcasterId}`);
-    this.profileImageById.set(user.id, user.profile_image_url);
-    return {
-      id: user.id,
-      login: user.login.toLowerCase(),
-      displayName: user.display_name,
-      profileImageUrl: user.profile_image_url,
-      url: `https://www.twitch.tv/${encodeURIComponent(user.login)}`,
-      isLive: false,
-    };
-  }
-
   async subscribeToOnline(broadcasterId: string, sessionId: string): Promise<void> {
-    await this.request<unknown>("https://api.twitch.tv/helix/eventsub/subscriptions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: "stream.online",
-        version: "1",
-        condition: { broadcaster_user_id: broadcasterId },
-        transport: { method: "websocket", session_id: sessionId },
-      }),
-    });
+    try {
+      await this.request<unknown>("https://api.twitch.tv/helix/eventsub/subscriptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "stream.online",
+          version: "1",
+          condition: { broadcaster_user_id: broadcasterId },
+          transport: { method: "websocket", session_id: sessionId },
+        }),
+      });
+    } catch (error) {
+      // Twitch may still consider the subscription active during a fast
+      // reconnect. Treat the duplicate as success.
+      if (error instanceof TwitchApiError && error.status === 409) return;
+      throw error;
+    }
   }
 
   async getLiveStreams(broadcasterIds: string[]): Promise<LiveStream[]> {
@@ -149,16 +147,43 @@ export class TwitchApi implements TwitchStreamsPort {
       },
       signal: AbortSignal.timeout(15_000),
     });
-    let response = await execute();
-    if (response.status === 401) {
-      await this.refreshAccessToken();
-      response = await execute();
+
+    let refreshedAfterUnauthorized = false;
+    for (let attempt = 0; ; attempt += 1) {
+      let response: Response;
+      try {
+        response = await execute();
+      } catch (error) {
+        // A network failure or timeout is transient: retry before giving up.
+        if (attempt >= this.maxRetries) throw error;
+        await this.sleepForRetry(attempt, null);
+        continue;
+      }
+      if (response.status === 401 && !refreshedAfterUnauthorized) {
+        refreshedAfterUnauthorized = true;
+        await this.refreshAccessToken();
+        continue;
+      }
+      if ((response.status === 429 || response.status >= 500) && attempt < this.maxRetries) {
+        await this.sleepForRetry(attempt, response.headers.get("retry-after"));
+        continue;
+      }
+      if (!response.ok) {
+        throw new TwitchApiError(`Twitch API request failed with HTTP ${response.status}`, response.status);
+      }
+      if (response.status === 204) return undefined as T;
+      return await response.json() as T;
     }
-    if (!response.ok) {
-      throw new TwitchApiError(`Twitch API request failed with HTTP ${response.status}`, response.status);
-    }
-    if (response.status === 204) return undefined as T;
-    return await response.json() as T;
+  }
+
+  private async sleepForRetry(attempt: number, retryAfter: string | null): Promise<void> {
+    const retryAfterSeconds = retryAfter === null ? Number.NaN : Number(retryAfter);
+    const delay = Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0
+      ? retryAfterSeconds * 1_000
+      : this.retryDelayMs * 2 ** attempt;
+    await new Promise((resolve) => {
+      setTimeout(resolve, Math.min(Math.max(delay, 0), 30_000));
+    });
   }
 
   private async refreshAccessToken(): Promise<void> {
