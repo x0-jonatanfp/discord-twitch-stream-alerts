@@ -36,7 +36,7 @@ deploy: build
 	rsync -av --delete dist/ $(DEST)/dist/
 	install -m 0644 package.json pnpm-lock.yaml pnpm-workspace.yaml $(DEST)/
 	cd $(DEST) && pnpm install --prod --frozen-lockfile
-	sudo systemctl enable $(SERVICE).service
+	systemctl is-enabled --quiet $(SERVICE).service || sudo systemctl enable $(SERVICE).service
 	sudo systemctl restart $(SERVICE).service
 	systemctl is-active --quiet $(SERVICE).service
 

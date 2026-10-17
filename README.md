@@ -76,7 +76,7 @@ La unidad está en `deploy/announcements.service`. La instalación del servicio 
 
 ```bash
 make install  # crea el destino, instala la unidad y la config; no la habilita ni arranca
-make deploy   # build, dependencias de producción y código; habilita y reinicia la unidad
+make deploy   # build, dependencias de producción y código; habilita si hace falta y reinicia la unidad
 ```
 
 Antes del primer `make deploy`, prepara `/srv/services/announcements/.env` con permisos `600` y `config/guilds.json` para producción. El deploy no copia `.env` y conserva la configuración de guild existente; `make install` crea esa configuración a partir de la copia local solo si aún no existe. El perfil `srv:announcements` del lanzador de secretos carga el `.env` del destino.
