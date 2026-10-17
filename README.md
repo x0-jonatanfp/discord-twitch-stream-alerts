@@ -51,6 +51,8 @@ Fill `.env` locally. Edit `config/guilds.json` for each Discord guild:
 
 Enable Developer Mode in Discord, then copy server and text channel IDs. Twitch names are channel logins, not URLs. The same Twitch channel can appear in different guild entries; that stream gets an alert in each listed Discord channel.
 
+If a configured Twitch login cannot be resolved (the account was renamed or deleted), the bot logs a warning and keeps monitoring the remaining channels. Update `config/guilds.json` and restart to fix it.
+
 Bot presence matches `server-status`: `BOT_ACTIVITY_TYPE=Custom`, `BOT_ACTIVITY_NAME=x0void.com` and `BOT_ACTIVITY_STATE=🔗 x0void.com`. This free-form custom state is not a clickable link. `BOT_ACTIVITY_URL` is only used by a `Streaming` activity and then must be an HTTPS Twitch/YouTube URL. Presence is reapplied after Discord shard ready/resume events and each Twitch reconciliation cycle.
 
 ## Run
@@ -73,11 +75,11 @@ pnpm start
 La unidad está en `deploy/announcements.service`. La instalación del servicio y la actualización del código son pasos separados:
 
 ```bash
-make install  # instala y habilita la unidad; pide sudo
-make deploy   # build, dependencias de producción y código; reinicia la unidad
+make install  # crea el destino, instala la unidad y la config; no la habilita ni arranca
+make deploy   # build, dependencias de producción y código; habilita y reinicia la unidad
 ```
 
-Antes del primer `make deploy`, prepara `/srv/services/announcements/.env` con permisos `600` y `config/guilds.json` para producción. El deploy no copia `.env`; conserva la configuración de guild existente y crea esa configuración a partir de la copia local solo si aún no existe. El perfil `srv:announcements` del lanzador de secretos carga el `.env` del destino.
+Antes del primer `make deploy`, prepara `/srv/services/announcements/.env` con permisos `600` y `config/guilds.json` para producción. El deploy no copia `.env` y conserva la configuración de guild existente; `make install` crea esa configuración a partir de la copia local solo si aún no existe. El perfil `srv:announcements` del lanzador de secretos carga el `.env` del destino.
 
 `TWITCH_RECONCILE_INTERVAL_SECONDS` defaults to 60 (valid 15–3600). EventSub supplies normal near-real-time start notifications; Helix polling reconciles after reconnect/startup and recovers events missed while disconnected. State is stored under `data/live-state.json` by default.
 
