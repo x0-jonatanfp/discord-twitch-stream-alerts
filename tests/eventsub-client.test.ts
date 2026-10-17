@@ -9,6 +9,10 @@ class FakeWebSocket extends EventEmitter {
     this.readyState = WebSocket.CLOSED;
     this.emit("close", code ?? 1000);
   });
+  terminate = vi.fn(() => {
+    this.readyState = WebSocket.CLOSED;
+    this.emit("close", 4000);
+  });
   message(payload: unknown): void {
     this.emit("message", Buffer.from(typeof payload === "string" ? payload : JSON.stringify(payload)));
   }
@@ -16,9 +20,9 @@ class FakeWebSocket extends EventEmitter {
 const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 const onlineEvent = {
   id: "event-1", broadcaster_user_id: "broadcaster-1", broadcaster_user_login: "streamer", broadcaster_user_name: "Streamer",
-  title: "Live", started_at: "2025-01-02T03:04:05Z",
+  type: "live", started_at: "2025-01-02T03:04:05Z",
 };
-function createClient() {
+function createClient(options: { keepaliveTimeoutMs?: number } = {}) {
   const sockets: FakeWebSocket[] = [];
   const subscribeToOnline = vi.fn(async () => undefined);
   const onStreamOnline = vi.fn(async () => undefined);
@@ -29,6 +33,7 @@ function createClient() {
     onStreamOnline,
     onSessionReady,
     logger,
+    keepaliveTimeoutMs: options.keepaliveTimeoutMs,
     webSocketFactory: () => {
       const socket = new FakeWebSocket();
       sockets.push(socket);
@@ -77,6 +82,35 @@ describe("EventSubClient", () => {
     f.sockets[0]?.message({ metadata: { message_type: "revocation" }, payload: { subscription: { status: "authorization_revoked" } } });
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("malformed"));
     expect(logger.error).toHaveBeenCalledWith(expect.stringContaining("authorization_revoked"));
+    await f.client.stop();
+  });
+
+  it("resubscribes a revoked broadcaster on the current session", async () => {
+    const f = createClient();
+    f.client.start();
+    f.sockets[0]?.message({ metadata: { message_type: "session_welcome" }, payload: { session: { id: "session-1" } } });
+    await vi.waitFor(() => expect(f.subscribeToOnline).toHaveBeenCalledTimes(2));
+
+    f.sockets[0]?.message({
+      metadata: { message_type: "revocation" },
+      payload: {
+        subscription: {
+          status: "authorization_revoked",
+          condition: { broadcaster_user_id: "id-1" },
+        },
+      },
+    });
+
+    await vi.waitFor(() => expect(f.subscribeToOnline).toHaveBeenCalledTimes(3));
+    expect(f.subscribeToOnline).toHaveBeenLastCalledWith("id-1", "session-1");
+    await f.client.stop();
+  });
+
+  it("reconnects when no keepalive arrives within the timeout", async () => {
+    const f = createClient({ keepaliveTimeoutMs: 20 });
+    f.client.start();
+    await vi.waitFor(() => expect(f.sockets[0]?.terminate).toHaveBeenCalled());
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("keepalive timed out"));
     await f.client.stop();
   });
 

@@ -8,7 +8,11 @@ interface EventSubEnvelope {
   payload?: {
     session?: { id?: string; reconnect_url?: string | null };
     event?: StreamOnlineEvent;
-    subscription?: { status?: string; type?: string };
+    subscription?: {
+      status?: string;
+      type?: string;
+      condition?: { broadcaster_user_id?: string };
+    };
   };
 }
 
@@ -19,27 +23,35 @@ export interface EventSubClientOptions {
   onSessionReady?: () => Promise<void>;
   logger: LoggerPort;
   webSocketFactory?: (url: string) => WebSocket;
+  keepaliveTimeoutMs?: number;
 }
 
 export class EventSubClient {
   private readonly sockets = new Set<WebSocket>();
   private stopped = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private keepaliveTimer: NodeJS.Timeout | null = null;
+  private keepaliveSocket: WebSocket | null = null;
   private currentSocket: WebSocket | null = null;
   private replacementSocket: WebSocket | null = null;
+  private currentSessionId: string | null = null;
+  private reconnectAttempts = 0;
   private readonly reconnectHandoverSockets = new WeakSet<WebSocket>();
 
   constructor(private readonly options: EventSubClientOptions) {}
 
   start(): void {
     this.stopped = false;
+    this.reconnectAttempts = 0;
     this.connect("wss://eventsub.wss.twitch.tv/ws", true);
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.clearKeepalive();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
+    this.currentSessionId = null;
     const sockets = [...this.sockets];
     await Promise.all(sockets.map((socket) => new Promise<void>((resolve) => {
       if (socket.readyState === WebSocket.CLOSED) {
@@ -54,6 +66,8 @@ export class EventSubClient {
       socket.close(1000, "shutting down");
     })));
     this.sockets.clear();
+    this.currentSocket = null;
+    this.replacementSocket = null;
   }
 
   private connect(url: string, makeCurrent: boolean, isReconnectHandover = false): void {
@@ -63,8 +77,10 @@ export class EventSubClient {
     if (isReconnectHandover) this.reconnectHandoverSockets.add(socket);
     if (makeCurrent) this.currentSocket = socket;
     else this.replacementSocket = socket;
+    this.resetKeepalive(socket);
 
     socket.on("message", (raw: WebSocket.RawData) => {
+      this.resetKeepalive(socket);
       void this.handleMessage(socket, raw.toString());
     });
     socket.on("error", (error: Error) => {
@@ -72,6 +88,7 @@ export class EventSubClient {
     });
     socket.on("close", (code: number) => {
       this.sockets.delete(socket);
+      if (this.keepaliveSocket === socket) this.clearKeepalive();
       if (this.currentSocket === socket) this.currentSocket = null;
       if (this.replacementSocket === socket) this.replacementSocket = null;
       if (this.stopped) return;
@@ -98,6 +115,8 @@ export class EventSubClient {
         this.options.logger.error("Twitch EventSub welcome message did not contain a session ID");
         return;
       }
+      this.currentSessionId = sessionId;
+      this.reconnectAttempts = 0;
       this.options.logger.info("Connected to Twitch EventSub WebSocket");
       if (!this.reconnectHandoverSockets.has(socket)) await this.subscribeAll(sessionId);
       const oldSocket = this.replacementSocket === socket ? this.currentSocket : null;
@@ -127,7 +146,15 @@ export class EventSubClient {
     }
     if (messageType === "session_keepalive") return;
     if (messageType === "revocation") {
-      this.options.logger.error(`Twitch EventSub subscription revoked: ${envelope.payload?.subscription?.status ?? "unknown"}`);
+      const status = envelope.payload?.subscription?.status ?? "unknown";
+      this.options.logger.error(`Twitch EventSub subscription revoked: ${status}`);
+      const broadcasterId = envelope.payload?.subscription?.condition?.broadcaster_user_id;
+      if (broadcasterId && this.currentSessionId) {
+        void this.subscribeOne(broadcasterId, this.currentSessionId);
+      } else if (this.currentSocket) {
+        // Without the affected broadcaster, reconnect and subscribe to all.
+        this.currentSocket.close(4000, "subscription revoked");
+      }
       return;
     }
     if (messageType !== "notification" || envelope.metadata?.subscription_type !== "stream.online") return;
@@ -142,20 +169,48 @@ export class EventSubClient {
 
   private async subscribeAll(sessionId: string): Promise<void> {
     for (const broadcasterId of this.options.broadcasterIds) {
-      try {
-        await this.options.twitch.subscribeToOnline(broadcasterId, sessionId);
-      } catch (error) {
-        this.options.logger.error(`Failed to subscribe to Twitch broadcaster ${broadcasterId}: ${errorMessage(error)}`);
-      }
+      await this.subscribeOne(broadcasterId, sessionId);
     }
+  }
+
+  private async subscribeOne(broadcasterId: string, sessionId: string): Promise<void> {
+    try {
+      await this.options.twitch.subscribeToOnline(broadcasterId, sessionId);
+    } catch (error) {
+      this.options.logger.error(`Failed to subscribe to Twitch broadcaster ${broadcasterId}: ${errorMessage(error)}`);
+    }
+  }
+
+  private resetKeepalive(socket: WebSocket): void {
+    if (this.stopped) return;
+    if (socket !== this.currentSocket && socket !== this.replacementSocket) return;
+    this.clearKeepalive();
+    this.keepaliveSocket = socket;
+    const timer = setTimeout(() => {
+      if (this.stopped || this.keepaliveSocket !== socket) return;
+      this.keepaliveTimer = null;
+      this.keepaliveSocket = null;
+      this.options.logger.warn("Twitch EventSub keepalive timed out; reconnecting");
+      socket.terminate();
+    }, this.options.keepaliveTimeoutMs ?? 30_000);
+    timer.unref();
+    this.keepaliveTimer = timer;
+  }
+
+  private clearKeepalive(): void {
+    if (this.keepaliveTimer) clearTimeout(this.keepaliveTimer);
+    this.keepaliveTimer = null;
+    this.keepaliveSocket = null;
   }
 
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer) return;
+    const delay = Math.min(30_000, 1_000 * 2 ** this.reconnectAttempts);
+    this.reconnectAttempts += 1;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect("wss://eventsub.wss.twitch.tv/ws", true);
-    }, 3_000);
+    }, delay + Math.floor(Math.random() * 250));
     this.reconnectTimer.unref();
   }
 }
