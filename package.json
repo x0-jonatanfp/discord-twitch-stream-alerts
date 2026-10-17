@@ -12,7 +12,8 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "auth:twitch": "tsx src/infrastructure/twitch/oauth-setup.ts",
-    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
+    "build": "pnpm clean && tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
