@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildProfileEmbed, buildStreamEmbed, createDiscordStreamNotifier } from "../src/infrastructure/discord/stream-notifier.js";
-import type { ChannelProfile, LiveStream } from "../src/domain/entities/stream.js";
+import {
+  buildStreamEmbed,
+  createDiscordStreamNotifier,
+  validateDiscordChannels,
+} from "../src/infrastructure/discord/stream-notifier.js";
+import type { LiveStream } from "../src/domain/entities/stream.js";
 
-const profile: ChannelProfile = {
-  id: "id-1", login: "streamer", displayName: "Streamer", profileImageUrl: "https://images.example/avatar.png",
-  url: "https://www.twitch.tv/streamer", isLive: false,
-};
 const stream: LiveStream = {
   id: "stream-1", broadcasterId: "id-1", broadcasterLogin: "streamer", broadcasterName: "Streamer",
   title: "Hello Stream", categoryName: "Game", startedAt: "2025-01-02T03:04:05Z", url: "https://www.twitch.tv/streamer",
@@ -14,7 +14,12 @@ const stream: LiveStream = {
 
 function mockClient() {
   const send = vi.fn(async (_payload: unknown) => undefined);
-  const fetchChannel = vi.fn(async (channelId: string) => ({ isTextBased: () => true, send, channelId }));
+  const fetchChannel = vi.fn(async (channelId: string) => ({
+    isTextBased: () => true,
+    send,
+    channelId,
+    guildId: "guild-1",
+  }));
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   return { client: { channels: { fetch: fetchChannel } } as never, send, fetchChannel, logger };
 }
@@ -50,14 +55,6 @@ describe("createDiscordStreamNotifier", () => {
     expect(payload.embeds[0]?.toJSON().description).toContain("<t:");
   });
 
-  it("builds a profile embed with author avatar left and linked title", () => {
-    expect(buildProfileEmbed(profile).toJSON()).toMatchObject({
-      title: "Streamer",
-      url: profile.url,
-      author: { name: "Streamer", icon_url: profile.profileImageUrl },
-    });
-  });
-
   it("uses a safe fallback title and category and omits a missing stream image", () => {
     const incompleteStream = { ...stream, title: "", categoryName: "", thumbnailUrl: "" };
     const embed = buildStreamEmbed(incompleteStream).toJSON();
@@ -77,5 +74,41 @@ describe("createDiscordStreamNotifier", () => {
     const mock = mockClient();
     mock.fetchChannel.mockResolvedValue({ isTextBased: () => false } as never);
     await expect(createDiscordStreamNotifier(mock.client, mock.logger).notify({ guildId: "guild-1", channelId: "voice", stream })).rejects.toThrow(/cannot receive messages/);
+  });
+
+  it("rejects a channel that belongs to another guild", async () => {
+    const mock = mockClient();
+    mock.fetchChannel.mockResolvedValue({
+      isTextBased: () => true,
+      send: mock.send,
+      channelId: "channel-1",
+      guildId: "guild-2",
+    } as never);
+    await expect(
+      createDiscordStreamNotifier(mock.client, mock.logger).notify({ guildId: "guild-1", channelId: "channel-1", stream }),
+    ).rejects.toThrow(/does not belong to guild/);
+    expect(mock.send).not.toHaveBeenCalled();
+  });
+
+  it("validates configured channels at startup and reports unusable ones", async () => {
+    const permissions = { has: vi.fn(() => true) };
+    const client = {
+      user: { id: "bot" },
+      channels: {
+        fetch: vi.fn(async (channelId: string) => channelId === "ok"
+          ? { isTextBased: () => true, send: vi.fn(), guildId: "guild-1", permissionsFor: () => permissions }
+          : { isTextBased: () => true, send: vi.fn(), guildId: "guild-2", permissionsFor: () => permissions }),
+      },
+    } as never;
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+    await validateDiscordChannels(client, [
+      { guildId: "guild-1", alertChannelId: "ok", twitchChannels: ["streamer"] },
+      { guildId: "guild-1", alertChannelId: "wrong-guild", twitchChannels: ["streamer"] },
+    ], log);
+
+    expect(log.info).toHaveBeenCalledOnce();
+    expect(log.error).toHaveBeenCalledOnce();
+    expect(log.error).toHaveBeenCalledWith(expect.stringContaining("wrong-guild"));
   });
 });
