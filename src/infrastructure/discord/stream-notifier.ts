@@ -85,7 +85,6 @@ export function buildStreamEmbed(stream: LiveStream): EmbedBuilder {
     .setDescription([
       `🎮 **Categoría:** ${stream.categoryName || "Sin categoría"}`,
       `👁️ **Espectadores:** ${stream.viewerCount}`,
-      `🕒 **En directo desde:** <t:${Math.floor(new Date(stream.startedAt).getTime() / 1000)}:R>`,
     ].join("\n"));
 
   if (stream.thumbnailUrl) embed.setImage(stream.thumbnailUrl);

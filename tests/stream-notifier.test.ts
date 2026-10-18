@@ -52,7 +52,6 @@ describe("createDiscordStreamNotifier", () => {
       description: expect.stringContaining("**Categoría:** Game"),
     });
     expect(payload.embeds[0]?.toJSON().description).toContain("**Espectadores:** 1234");
-    expect(payload.embeds[0]?.toJSON().description).toContain("<t:");
   });
 
   it("uses a safe fallback title and category and omits a missing stream image", () => {
