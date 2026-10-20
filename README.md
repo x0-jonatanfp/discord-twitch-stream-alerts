@@ -105,3 +105,7 @@ Tests use fakes and must not send real Discord messages or create Twitch subscri
 - `.env.example` and `config/guilds.example.json` are safe templates only.
 - Each person hosting a copy must create their own Discord and Twitch applications and provide their own credentials.
 - If a token or client secret is accidentally shared or committed, revoke/rotate it immediately.
+
+## Licencia
+
+MIT. Consulta [LICENSE](LICENSE).
