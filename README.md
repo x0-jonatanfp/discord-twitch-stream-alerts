@@ -20,13 +20,9 @@ A TypeScript Discord bot that posts an alert when configured Twitch channels go 
 
 ## How it works
 
-```mermaid
-flowchart LR
-  ES["Twitch EventSub<br/>stream.online"] -->|near real-time| BOT["Bot<br/>TypeScript"]
-  HX["Twitch Helix<br/>polling every 60 s"] -->|reconcile| BOT
-  BOT -->|embed + @everyone| G1["Discord guild A<br/>alert channel"]
-  BOT -->|embed + @everyone| G2["Discord guild B<br/>alert channel"]
-```
+![Runtime architecture](assets/architecture.svg)
+
+Twitch EventSub provides near-real-time `stream.online` events; Helix polling reconciles missed events after startup or reconnect. The bot resolves each Twitch channel once, tracks per-subscriber delivery in `data/live-state.json`, and posts the embed to every subscribed guild channel.
 
 ## Example alert
 
