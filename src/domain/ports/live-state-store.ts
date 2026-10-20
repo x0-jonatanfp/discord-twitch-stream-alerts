@@ -1,3 +1,5 @@
+import type { StreamAlertMessage } from "../entities/stream.js";
+
 export interface LiveStreamStateEntry {
   streamId: string;
   /**
@@ -5,6 +7,8 @@ export interface LiveStreamStateEntry {
    * alert. `"*"` means every subscriber (legacy state format).
    */
   deliveredTo: string[];
+  /** Alerts posted for this stream, used to dim their embed when it ends. */
+  alerts: StreamAlertMessage[];
 }
 
 export type LiveStreamState = Record<string, LiveStreamStateEntry>;

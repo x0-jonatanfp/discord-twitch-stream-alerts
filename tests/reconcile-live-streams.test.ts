@@ -22,7 +22,9 @@ const channelList: TwitchChannel[] = [
 const index = buildSubscriberIndex(config.guilds, channelList);
 
 function fixture(options: { saved?: LiveStreamState; live?: LiveStream[] } = {}) {
-  const notify = vi.fn(async () => undefined);
+  let messageCounter = 0;
+  const notify = vi.fn(async () => ({ messageId: `message-${++messageCounter}` }));
+  const markStreamEnded = vi.fn(async () => undefined);
   let saved: LiveStreamState = structuredClone(options.saved ?? {});
   const stateStore = {
     load: vi.fn(async () => structuredClone(saved)),
@@ -39,11 +41,11 @@ function fixture(options: { saved?: LiveStreamState; live?: LiveStream[] } = {})
   const reconciler = createLiveStreamReconciler({
     subscribersByBroadcasterId: index.subscribersByBroadcasterId,
     twitch,
-    notifier: { notify },
+    notifier: { notify, markStreamEnded },
     stateStore,
     logger,
   });
-  return { notify, stateStore, twitch, logger, reconciler, get saved() { return saved; } };
+  return { notify, markStreamEnded, stateStore, twitch, logger, reconciler, get saved() { return saved; } };
 }
 
 describe("createLiveStreamReconciler", () => {
@@ -54,6 +56,10 @@ describe("createLiveStreamReconciler", () => {
     expect(f.saved["id-1"]).toEqual({
       streamId: "stream-1",
       deliveredTo: ["guild-a:alerts-a", "guild-b:alerts-b"],
+      alerts: [
+        { guildId: "guild-a", channelId: "alerts-a", messageId: "message-1" },
+        { guildId: "guild-b", channelId: "alerts-b", messageId: "message-2" },
+      ],
     });
   });
 
@@ -68,17 +74,18 @@ describe("createLiveStreamReconciler", () => {
   });
 
   it("does not announce a stream already live according to saved state on restart", async () => {
-    const f = fixture({ saved: { "id-1": { streamId: "stream-1", deliveredTo: ["*"] } } });
+    const f = fixture({ saved: { "id-1": { streamId: "stream-1", deliveredTo: ["*"], alerts: [] } } });
     await f.reconciler.reconcile();
     expect(f.notify).not.toHaveBeenCalled();
     expect(f.saved["id-1"]).toEqual({
       streamId: "stream-1",
       deliveredTo: ["guild-a:alerts-a", "guild-b:alerts-b"],
+      alerts: [],
     });
   });
 
   it("announces a new stream ID from the same broadcaster", async () => {
-    const f = fixture({ saved: { "id-1": { streamId: "old-stream", deliveredTo: ["*"] } } });
+    const f = fixture({ saved: { "id-1": { streamId: "old-stream", deliveredTo: ["*"], alerts: [] } } });
     await f.reconciler.reconcile();
     expect(f.notify).toHaveBeenCalledTimes(2);
     expect(f.saved["id-1"]?.deliveredTo).not.toContain("*");
@@ -87,8 +94,8 @@ describe("createLiveStreamReconciler", () => {
   it("removes broadcasters that are now offline from persisted state", async () => {
     const f = fixture({
       saved: {
-        "id-1": { streamId: "stream-1", deliveredTo: ["*"] },
-        stale: { streamId: "old", deliveredTo: ["*"] },
+        "id-1": { streamId: "stream-1", deliveredTo: ["*"], alerts: [] },
+        stale: { streamId: "old", deliveredTo: ["*"], alerts: [] },
       },
       live: [],
     });
@@ -114,7 +121,7 @@ describe("createLiveStreamReconciler", () => {
   });
 
   it("loads persisted state before handling an EventSub event so duplicate restarts are suppressed", async () => {
-    const f = fixture({ saved: { "id-1": { streamId: "stream-1", deliveredTo: ["*"] } }, live: [] });
+    const f = fixture({ saved: { "id-1": { streamId: "stream-1", deliveredTo: ["*"], alerts: [] } }, live: [] });
     await f.reconciler.handleOnlineEvent(stream);
     expect(f.stateStore.load).toHaveBeenCalledOnce();
     expect(f.notify).not.toHaveBeenCalled();
@@ -128,7 +135,7 @@ describe("createLiveStreamReconciler", () => {
   });
 
   it("preserves the previous in-memory state if Twitch lookup fails", async () => {
-    const f = fixture({ saved: { "id-1": { streamId: "stream-1", deliveredTo: ["*"] } } });
+    const f = fixture({ saved: { "id-1": { streamId: "stream-1", deliveredTo: ["*"], alerts: [] } } });
     await f.reconciler.reconcile();
     f.twitch.getLiveStreams.mockRejectedValueOnce(new Error("network"));
     await expect(f.reconciler.reconcile()).rejects.toThrow("network");
@@ -191,5 +198,68 @@ describe("createLiveStreamReconciler", () => {
     await f.reconciler.handleOnlineEvent({ ...stream, broadcasterId: "unknown" });
     expect(f.notify).not.toHaveBeenCalled();
     expect(f.logger.warn).toHaveBeenCalledWith(expect.stringContaining("not configured"));
+  });
+
+  it("marks posted alerts as ended when the stream goes offline", async () => {
+    const alerts = [
+      { guildId: "guild-a", channelId: "alerts-a", messageId: "message-a" },
+      { guildId: "guild-b", channelId: "alerts-b", messageId: "message-b" },
+    ];
+    const f = fixture({
+      saved: {
+        "id-1": { streamId: "stream-1", deliveredTo: ["guild-a:alerts-a", "guild-b:alerts-b"], alerts },
+      },
+      live: [],
+    });
+    await f.reconciler.reconcile();
+    expect(f.markStreamEnded).toHaveBeenCalledTimes(2);
+    expect(f.markStreamEnded).toHaveBeenCalledWith(alerts[0]);
+    expect(f.markStreamEnded).toHaveBeenCalledWith(alerts[1]);
+    expect(f.saved).toEqual({});
+  });
+
+  it("marks the previous stream as ended when a new one replaces it", async () => {
+    const previousAlert = { guildId: "guild-a", channelId: "alerts-a", messageId: "old-message" };
+    const f = fixture({
+      saved: {
+        "id-1": { streamId: "old-stream", deliveredTo: ["guild-a:alerts-a", "guild-b:alerts-b"], alerts: [previousAlert] },
+      },
+    });
+    await f.reconciler.reconcile();
+    expect(f.markStreamEnded).toHaveBeenCalledOnce();
+    expect(f.markStreamEnded).toHaveBeenCalledWith(previousAlert);
+    expect(f.notify).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not mark alerts as ended while the same stream remains live", async () => {
+    const alert = { guildId: "guild-a", channelId: "alerts-a", messageId: "message-a" };
+    const f = fixture({
+      saved: { "id-1": { streamId: "stream-1", deliveredTo: ["guild-a:alerts-a", "guild-b:alerts-b"], alerts: [alert] } },
+    });
+    await f.reconciler.reconcile();
+    expect(f.markStreamEnded).not.toHaveBeenCalled();
+  });
+
+  it("logs a failed ended-alert edit and still drops the state entry", async () => {
+    const alert = { guildId: "guild-a", channelId: "alerts-a", messageId: "message-a" };
+    const f = fixture({
+      saved: { "id-1": { streamId: "stream-1", deliveredTo: ["guild-a:alerts-a"], alerts: [alert] } },
+      live: [],
+    });
+    f.markStreamEnded.mockRejectedValueOnce(new Error("Discord 404"));
+    await f.reconciler.reconcile();
+    expect(f.logger.warn).toHaveBeenCalledWith(expect.stringContaining("Could not mark Twitch alert"));
+    expect(f.saved).toEqual({});
+  });
+
+  it("marks a replaced stream as ended from an EventSub event", async () => {
+    const previousAlert = { guildId: "guild-a", channelId: "alerts-a", messageId: "old-message" };
+    const f = fixture({
+      saved: { "id-1": { streamId: "old-stream", deliveredTo: ["guild-a:alerts-a"], alerts: [previousAlert] } },
+      live: [],
+    });
+    await f.reconciler.handleOnlineEvent(stream);
+    expect(f.markStreamEnded).toHaveBeenCalledWith(previousAlert);
+    expect(f.notify).toHaveBeenCalledTimes(2);
   });
 });

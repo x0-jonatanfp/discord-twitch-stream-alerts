@@ -21,6 +21,13 @@ export interface StreamSubscriber {
   channelId: string;
 }
 
+/** A posted alert message, kept so its embed can be marked as ended later. */
+export interface StreamAlertMessage {
+  guildId: string;
+  channelId: string;
+  messageId: string;
+}
+
 export interface LiveStream {
   id: string;
   broadcasterId: string;

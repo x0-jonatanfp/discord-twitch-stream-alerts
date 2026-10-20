@@ -46,6 +46,7 @@ export function createLiveStreamReconciler(dependencies: ReconciliationDependenc
   async function performReconcile(): Promise<void> {
     await ensureInitialized();
     const liveStreams = await dependencies.twitch.getLiveStreams(allBroadcasterIds);
+    await endMissingStreams(liveStreams);
     const currentState: LiveStreamState = {};
 
     for (const stream of liveStreams) {
@@ -53,9 +54,9 @@ export function createLiveStreamReconciler(dependencies: ReconciliationDependenc
       if (!subscribers || subscribers.length === 0) continue;
 
       const previous = knownLive[stream.broadcasterId];
-      const entry = previous?.streamId === stream.id
-        ? { streamId: stream.id, deliveredTo: expandDeliveredTo(previous, subscribers) }
-        : { streamId: stream.id, deliveredTo: [] };
+      const entry: LiveStreamStateEntry = previous?.streamId === stream.id
+        ? { streamId: stream.id, deliveredTo: expandDeliveredTo(previous, subscribers), alerts: [...previous.alerts] }
+        : { streamId: stream.id, deliveredTo: [], alerts: [] };
 
       await deliverPending(stream, entry, subscribers);
       currentState[stream.broadcasterId] = entry;
@@ -78,15 +79,46 @@ export function createLiveStreamReconciler(dependencies: ReconciliationDependenc
       }
 
       const previous = knownLive[stream.broadcasterId];
-      const entry = previous?.streamId === stream.id
-        ? { streamId: stream.id, deliveredTo: expandDeliveredTo(previous, subscribers) }
-        : { streamId: stream.id, deliveredTo: [] };
+      if (previous && previous.streamId !== stream.id) {
+        await endStream(previous);
+      }
+      const entry: LiveStreamStateEntry = previous?.streamId === stream.id
+        ? { streamId: stream.id, deliveredTo: expandDeliveredTo(previous, subscribers), alerts: [...previous.alerts] }
+        : { streamId: stream.id, deliveredTo: [], alerts: [] };
       let changed = previous?.streamId !== stream.id;
       if (previous?.deliveredTo.includes("*")) changed = true;
       if (await deliverPending(stream, entry, subscribers)) changed = true;
 
       knownLive = { ...knownLive, [stream.broadcasterId]: entry };
       await persistState(changed);
+    });
+  }
+
+  /**
+   * Marks the alerts of streams that disappeared or were replaced as ended.
+   * The reconciliation poll is the source of truth, so endings are detected
+   * even if the bot missed a stream.offline event or was down.
+   */
+  async function endMissingStreams(liveStreams: readonly LiveStream[]): Promise<void> {
+    const liveById = new Map(liveStreams.map((stream) => [stream.broadcasterId, stream]));
+    const ended = Object.entries(knownLive).filter(([broadcasterId, entry]) => {
+      const current = liveById.get(broadcasterId);
+      return !current || current.id !== entry.streamId;
+    });
+    await Promise.all(ended.map(([, entry]) => endStream(entry)));
+  }
+
+  async function endStream(entry: LiveStreamStateEntry): Promise<void> {
+    if (entry.alerts.length === 0) return;
+    const results = await Promise.allSettled(entry.alerts.map((alert) =>
+      dependencies.notifier.markStreamEnded(alert),
+    ));
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        dependencies.logger.warn(
+          `Could not mark Twitch alert ${entry.alerts[index]?.messageId ?? "unknown"} as ended: ${errorMessage(result.reason)}`,
+        );
+      }
     });
   }
 
@@ -135,6 +167,11 @@ export function createLiveStreamReconciler(dependencies: ReconciliationDependenc
       if (result.status === "fulfilled") {
         if (subscriber) {
           entry.deliveredTo.push(subscriberKey(subscriber));
+          entry.alerts.push({
+            guildId: subscriber.guildId,
+            channelId: subscriber.channelId,
+            messageId: result.value.messageId,
+          });
           changed = true;
         }
         return;
@@ -173,7 +210,9 @@ function stateDiffers(left: LiveStreamState, right: LiveStreamState): boolean {
     if (!previous || !next) return true;
     if (previous.streamId !== next.streamId) return true;
     if (previous.deliveredTo.length !== next.deliveredTo.length) return true;
-    return previous.deliveredTo.some((value, index) => value !== next.deliveredTo[index]);
+    if (previous.deliveredTo.some((value, index) => value !== next.deliveredTo[index])) return true;
+    if (previous.alerts.length !== next.alerts.length) return true;
+    return previous.alerts.some((alert, index) => alert.messageId !== next.alerts[index]?.messageId);
   });
 }
 

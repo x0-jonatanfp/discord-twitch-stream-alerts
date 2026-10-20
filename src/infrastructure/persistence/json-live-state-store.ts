@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { LoggerPort } from "../../domain/ports/logger.js";
+import type { StreamAlertMessage } from "../../domain/entities/stream.js";
 import type {
   LiveStateStorePort,
   LiveStreamState,
@@ -72,7 +73,7 @@ function parseEntry(value: unknown): LiveStreamStateEntry {
   // Legacy format: { "broadcasterId": "streamId" }. It did not track delivery
   // per subscriber, so treat it as already delivered everywhere.
   if (typeof value === "string" && value.length > 0) {
-    return { streamId: value, deliveredTo: ["*"] };
+    return { streamId: value, deliveredTo: ["*"], alerts: [] };
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new Error("Invalid live stream state");
@@ -89,5 +90,28 @@ function parseEntry(value: unknown): LiveStreamStateEntry {
   return {
     streamId: entry.streamId,
     deliveredTo: [...new Set(entry.deliveredTo as string[])],
+    alerts: parseAlerts(entry.alerts),
   };
+}
+
+function parseAlerts(value: unknown): StreamAlertMessage[] {
+  // State written before the ended-alert feature has no alerts array; those
+  // old messages simply cannot be dimmed later.
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error("Invalid live stream state");
+
+  return value.map((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      throw new Error("Invalid live stream state");
+    }
+    const alert = item as Record<string, unknown>;
+    if (
+      typeof alert.guildId !== "string" || alert.guildId.length === 0
+      || typeof alert.channelId !== "string" || alert.channelId.length === 0
+      || typeof alert.messageId !== "string" || alert.messageId.length === 0
+    ) {
+      throw new Error("Invalid live stream state");
+    }
+    return { guildId: alert.guildId, channelId: alert.channelId, messageId: alert.messageId };
+  });
 }

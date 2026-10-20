@@ -13,22 +13,36 @@ const stream: LiveStream = {
 };
 
 function mockClient() {
-  const send = vi.fn(async (_payload: unknown) => undefined);
+  const send = vi.fn(async (_payload: unknown) => ({ id: "message-1" }));
+  const edit = vi.fn(async (_payload: unknown) => undefined);
+  const fetchMessage = vi.fn(async (_messageId: string) => ({
+    embeds: [{ toJSON: () => ({ title: "Hello Stream", color: 0x9146ff }) }],
+    edit,
+  }));
   const fetchChannel = vi.fn(async (channelId: string) => ({
     isTextBased: () => true,
     send,
     channelId,
     guildId: "guild-1",
+    messages: { fetch: fetchMessage },
   }));
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
-  return { client: { channels: { fetch: fetchChannel } } as never, send, fetchChannel, logger };
+  return {
+    client: { channels: { fetch: fetchChannel } } as never,
+    send,
+    edit,
+    fetchMessage,
+    fetchChannel,
+    logger,
+  };
 }
 
 describe("createDiscordStreamNotifier", () => {
   it("sends an everyone notice and a standard embed with avatar, linked title, and stream image", async () => {
     const mock = mockClient();
     const notifier = createDiscordStreamNotifier(mock.client, mock.logger);
-    await notifier.notify({ guildId: "guild-1", channelId: "channel-1", stream });
+    await expect(notifier.notify({ guildId: "guild-1", channelId: "channel-1", stream }))
+      .resolves.toEqual({ messageId: "message-1" });
     expect(mock.fetchChannel).toHaveBeenCalledWith("channel-1");
     const payload = mock.send.mock.calls[0]?.[0] as {
       content: string;
@@ -109,5 +123,58 @@ describe("createDiscordStreamNotifier", () => {
     expect(log.info).toHaveBeenCalledOnce();
     expect(log.error).toHaveBeenCalledOnce();
     expect(log.error).toHaveBeenCalledWith(expect.stringContaining("wrong-guild"));
+  });
+
+  it("recolors the posted embed when the stream ends", async () => {
+    const mock = mockClient();
+    await createDiscordStreamNotifier(mock.client, mock.logger).markStreamEnded({
+      guildId: "guild-1",
+      channelId: "channel-1",
+      messageId: "message-1",
+    });
+    expect(mock.fetchMessage).toHaveBeenCalledWith("message-1");
+    expect(mock.edit).toHaveBeenCalledWith({
+      embeds: [{ title: "Hello Stream", color: 0x4f545c }],
+    });
+    expect(mock.logger.info).toHaveBeenCalledWith(expect.stringContaining("as ended"));
+  });
+
+  it("skips messages that have no embed to recolor", async () => {
+    const mock = mockClient();
+    mock.fetchMessage.mockResolvedValueOnce({ embeds: [], edit: mock.edit } as never);
+    await createDiscordStreamNotifier(mock.client, mock.logger).markStreamEnded({
+      guildId: "guild-1",
+      channelId: "channel-1",
+      messageId: "message-1",
+    });
+    expect(mock.edit).not.toHaveBeenCalled();
+    expect(mock.logger.warn).toHaveBeenCalledWith(expect.stringContaining("no embed"));
+  });
+
+  it("rejects marking an alert in a channel from another guild", async () => {
+    const mock = mockClient();
+    mock.fetchChannel.mockResolvedValueOnce({
+      isTextBased: () => true,
+      send: mock.send,
+      channelId: "channel-1",
+      guildId: "guild-2",
+      messages: { fetch: mock.fetchMessage },
+    } as never);
+    await expect(createDiscordStreamNotifier(mock.client, mock.logger).markStreamEnded({
+      guildId: "guild-1",
+      channelId: "channel-1",
+      messageId: "message-1",
+    })).rejects.toThrow(/does not belong to guild/);
+    expect(mock.edit).not.toHaveBeenCalled();
+  });
+
+  it("propagates a missing message so the reconciler can log it", async () => {
+    const mock = mockClient();
+    mock.fetchMessage.mockRejectedValueOnce(new Error("Unknown Message"));
+    await expect(createDiscordStreamNotifier(mock.client, mock.logger).markStreamEnded({
+      guildId: "guild-1",
+      channelId: "channel-1",
+      messageId: "missing",
+    })).rejects.toThrow("Unknown Message");
   });
 });

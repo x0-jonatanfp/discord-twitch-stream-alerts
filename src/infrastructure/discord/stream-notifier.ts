@@ -10,6 +10,11 @@ import type {
 import type { StreamNotifierPort } from "../../domain/ports/stream-notifier.js";
 import type { LoggerPort } from "../../domain/ports/logger.js";
 
+/** Twitch purple, used while the broadcast is live. */
+export const LIVE_EMBED_COLOR = 0x9146ff;
+/** Discord's default embed gray, used once the broadcast has ended. */
+export const ENDED_EMBED_COLOR = 0x4f545c;
+
 export function createDiscordStreamNotifier(
   client: Client,
   logger: LoggerPort,
@@ -23,12 +28,30 @@ export function createDiscordStreamNotifier(
       if (!("guildId" in channel) || channel.guildId !== guildId) {
         throw new Error(`Configured Discord channel ${channelId} does not belong to guild ${guildId}`);
       }
-      await channel.send({
+      const message = await channel.send({
         content: `@everyone, **${stream.broadcasterLogin}** está ahora en directo: ${stream.url}`,
         embeds: [buildStreamEmbed(stream)],
         allowedMentions: { parse: ["everyone"] },
       });
       logger.info(`Posted Twitch live alert for ${stream.broadcasterLogin} in guild ${guildId}`);
+      return { messageId: message.id };
+    },
+    async markStreamEnded({ guildId, channelId, messageId }) {
+      const channel = await client.channels.fetch(channelId);
+      if (!channel || !channel.isTextBased() || !("messages" in channel)) {
+        throw new Error(`Configured Discord channel ${channelId} is unavailable or cannot hold messages`);
+      }
+      if (!("guildId" in channel) || channel.guildId !== guildId) {
+        throw new Error(`Configured Discord channel ${channelId} does not belong to guild ${guildId}`);
+      }
+      const message = await channel.messages.fetch(messageId);
+      const embed = message.embeds[0];
+      if (!embed) {
+        logger.warn(`Alert message ${messageId} in channel ${channelId} has no embed to mark as ended`);
+        return;
+      }
+      await message.edit({ embeds: [{ ...embed.toJSON(), color: ENDED_EMBED_COLOR }] });
+      logger.info(`Marked Twitch live alert ${messageId} as ended in guild ${guildId}`);
     },
   };
 }
@@ -75,7 +98,7 @@ export async function validateDiscordChannels(
 
 export function buildStreamEmbed(stream: LiveStream): EmbedBuilder {
   const embed = new EmbedBuilder()
-    .setColor(0x9146ff)
+    .setColor(LIVE_EMBED_COLOR)
     .setAuthor({
       name: stream.broadcasterName,
       ...(stream.profileImageUrl ? { iconURL: stream.profileImageUrl } : {}),

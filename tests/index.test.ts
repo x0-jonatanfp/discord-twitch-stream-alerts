@@ -181,8 +181,8 @@ function createBotHarness(overrides: Partial<CreateBotDependencies> = {}) {
     subscribeToOnline: vi.fn(async () => {}),
     getLiveStreams,
   };
-  const notify = vi.fn(async (_input: { guildId: string; channelId: string; stream: LiveStream }) => {});
-  const notifier: StreamNotifierPort = { notify };
+  const notify = vi.fn(async (_input: { guildId: string; channelId: string; stream: LiveStream }) => ({ messageId: "message-1" }));
+  const notifier: StreamNotifierPort = { notify, markStreamEnded: vi.fn(async () => {}) };
   const stateStore = createFakeStateStore();
   const eventSub = createEventSubCapture();
   const interval = createIntervalCapture();
@@ -448,8 +448,8 @@ function createMainHarness(overrides: Partial<MainDependencies> = {}) {
     subscribeToOnline: vi.fn(async () => {}),
     getLiveStreams,
   };
-  const notify = vi.fn(async (_input: { guildId: string; channelId: string; stream: LiveStream }) => {});
-  const notifier: StreamNotifierPort = { notify };
+  const notify = vi.fn(async (_input: { guildId: string; channelId: string; stream: LiveStream }) => ({ messageId: "message-1" }));
+  const notifier: StreamNotifierPort = { notify, markStreamEnded: vi.fn(async () => {}) };
   const stateStore = createFakeStateStore();
   const eventSub = createEventSubCapture();
   const validateChannels = vi.fn(async () => {});

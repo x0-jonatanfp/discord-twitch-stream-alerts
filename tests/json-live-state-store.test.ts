@@ -29,7 +29,11 @@ describe("createJsonLiveStateStore", () => {
     const path = join(await makeTempDir(), "data", "live.json");
     const store = createJsonLiveStateStore(path);
     const state: LiveStreamState = {
-      "broadcaster-1": { streamId: "stream-1", deliveredTo: ["guild-a:alerts-a"] },
+      "broadcaster-1": {
+        streamId: "stream-1",
+        deliveredTo: ["guild-a:alerts-a"],
+        alerts: [{ guildId: "guild-a", channelId: "alerts-a", messageId: "message-1" }],
+      },
     };
     await store.save(state);
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual(state);
@@ -41,7 +45,7 @@ describe("createJsonLiveStateStore", () => {
     const path = join(await makeTempDir(), "legacy.json");
     await writeFile(path, JSON.stringify({ "broadcaster-1": "stream-1" }));
     expect(await createJsonLiveStateStore(path).load()).toEqual({
-      "broadcaster-1": { streamId: "stream-1", deliveredTo: ["*"] },
+      "broadcaster-1": { streamId: "stream-1", deliveredTo: ["*"], alerts: [] },
     });
   });
 
@@ -63,5 +67,21 @@ describe("createJsonLiveStateStore", () => {
     expect(await createJsonLiveStateStore(path, log).load()).toEqual({});
     expect(log.warn).toHaveBeenCalledOnce();
     expect((await readdir(directory)).some((name) => name.startsWith("bad.json.corrupt-"))).toBe(true);
+  });
+
+  it("moves invalid alert references aside instead of disabling alerts", async () => {
+    const directory = await makeTempDir();
+    const path = join(directory, "bad-alerts.json");
+    await writeFile(path, JSON.stringify({
+      "broadcaster-1": {
+        streamId: "stream-1",
+        deliveredTo: ["guild-a:alerts-a"],
+        alerts: [{ guildId: "guild-a", channelId: "alerts-a" }],
+      },
+    }));
+    const log = logger();
+    expect(await createJsonLiveStateStore(path, log).load()).toEqual({});
+    expect(log.warn).toHaveBeenCalledOnce();
+    expect((await readdir(directory)).some((name) => name.startsWith("bad-alerts.json.corrupt-"))).toBe(true);
   });
 });
