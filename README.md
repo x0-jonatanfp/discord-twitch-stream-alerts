@@ -72,14 +72,20 @@ pnpm start
 
 ## Despliegue con systemd
 
-La unidad está en `deploy/announcements.service`. La instalación del servicio y la actualización del código son pasos separados:
+La unidad está en `deploy/announcements.service` y es una plantilla: `make install` sustituye `@DEPLOY_USER@`, `@DEPLOY_GROUP@`, `@DEPLOY_HOME@`, `@DEST@` y `@NODE_BIN@` antes de instalarla. Por defecto usa el usuario que ejecuta `make`, `/srv/services/announcements` y el `node` del `PATH`; se pueden cambiar por variables:
+
+```bash
+make install DEPLOY_USER=announcements DEPLOY_GROUP=announcements DEST=/srv/announcements
+```
+
+La instalación del servicio y la actualización del código son pasos separados:
 
 ```bash
 make install  # crea el destino, instala la unidad y la config; no la habilita ni arranca
 make deploy   # build, dependencias de producción y código; habilita si hace falta y reinicia la unidad
 ```
 
-Antes del primer `make deploy`, prepara `/srv/services/announcements/.env` con permisos `600` y `config/guilds.json` para producción. El deploy no copia `.env` y conserva la configuración de guild existente; `make install` crea esa configuración a partir de la copia local solo si aún no existe. El perfil `srv:announcements` del lanzador de secretos carga el `.env` del destino.
+Antes del primer `make deploy`, prepara `/srv/services/announcements/.env` con permisos `600` y `config/guilds.json` para producción. El deploy no copia `.env` y conserva la configuración de guild existente; `make install` crea esa configuración a partir de la copia local solo si aún no existe. La unidad carga el `.env` del destino con `EnvironmentFile=`; la aplicación también lo lee desde su directorio de trabajo.
 
 `TWITCH_RECONCILE_INTERVAL_SECONDS` defaults to 60 (valid 15–3600). EventSub supplies normal near-real-time start notifications; Helix polling reconciles after reconnect/startup and recovers events missed while disconnected. State is stored under `data/live-state.json` by default.
 

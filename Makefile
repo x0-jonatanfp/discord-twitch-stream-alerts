@@ -1,9 +1,12 @@
 NAME := announcements
-DEST := /srv/services/$(NAME)
+DEST ?= /srv/services/$(NAME)
 SERVICE := $(NAME)
 SYSTEMD_UNIT := /etc/systemd/system/$(SERVICE).service
-DEPLOY_USER := cultofskaro
-DEPLOY_GROUP := cultofskaro
+# Usuario, grupo y binario del servicio: sobrescribibles al invocar make.
+DEPLOY_USER ?= $(shell id -un)
+DEPLOY_GROUP ?= $(shell id -gn)
+DEPLOY_HOME ?= $(shell getent passwd $(DEPLOY_USER) | cut -d: -f6)
+NODE_BIN ?= $(shell command -v node 2>/dev/null || echo /usr/bin/node)
 
 .PHONY: build check typecheck test install deploy restart status logs
 
@@ -22,9 +25,14 @@ test:
 # ni la arranca. El deploy la activa cuando ya existe el .env de produccion.
 install:
 	sudo install -d -o $(DEPLOY_USER) -g $(DEPLOY_GROUP) -m 0750 $(DEST) $(DEST)/dist $(DEST)/config
-	sudo install -m 0644 deploy/$(SERVICE).service $(SYSTEMD_UNIT)
+	sed -e 's|@DEPLOY_USER@|$(DEPLOY_USER)|g' \
+		-e 's|@DEPLOY_GROUP@|$(DEPLOY_GROUP)|g' \
+		-e 's|@DEPLOY_HOME@|$(DEPLOY_HOME)|g' \
+		-e 's|@DEST@|$(DEST)|g' \
+		-e 's|@NODE_BIN@|$(NODE_BIN)|g' \
+		deploy/$(SERVICE).service | sudo install -m 0644 /dev/stdin $(SYSTEMD_UNIT)
 	sudo systemctl daemon-reload
-	if test ! -f $(DEST)/config/guilds.json; then install -o $(DEPLOY_USER) -g $(DEPLOY_GROUP) -m 0600 config/guilds.json $(DEST)/config/guilds.json; fi
+	if test ! -f $(DEST)/config/guilds.json; then sudo install -o $(DEPLOY_USER) -g $(DEPLOY_GROUP) -m 0600 config/guilds.json $(DEST)/config/guilds.json; fi
 
 # Solo sincroniza el bundle y manifiestos. Nunca copia el .env.
 # Preserva config/guilds.json y exige secretos de produccion preparados aparte.

@@ -1,3 +1,5 @@
+# Plantilla para systemd: make install sustituye los marcadores @...@ por el
+# usuario, grupo, home, destino y binario de Node del entorno.
 [Unit]
 Description=Announcements — alertas de directos de Twitch en Discord
 After=network-online.target
@@ -7,12 +9,12 @@ StartLimitBurst=15
 
 [Service]
 Type=simple
-User=cultofskaro
-Group=cultofskaro
-WorkingDirectory=/srv/services/announcements
-Environment=HOME=/home/cultofskaro
-# El lanzador carga /srv/services/announcements/.env (tokens y configuración).
-ExecStart=/home/cultofskaro/.secrets/bin/run srv:announcements -- /usr/bin/node dist/index.js
+User=@DEPLOY_USER@
+Group=@DEPLOY_GROUP@
+WorkingDirectory=@DEST@
+Environment=HOME=@DEPLOY_HOME@
+EnvironmentFile=@DEST@/.env
+ExecStart=@NODE_BIN@ dist/index.js
 Restart=always
 RestartSec=15
 UMask=0077
