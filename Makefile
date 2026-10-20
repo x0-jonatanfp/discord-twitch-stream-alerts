@@ -7,6 +7,8 @@ DEPLOY_USER ?= $(shell id -un)
 DEPLOY_GROUP ?= $(shell id -gn)
 DEPLOY_HOME ?= $(shell getent passwd $(DEPLOY_USER) | cut -d: -f6)
 NODE_BIN ?= $(shell command -v node 2>/dev/null || echo /usr/bin/node)
+# Fichero temporal donde se renderiza la unidad antes de instalarla.
+RENDERED_UNIT := /tmp/$(SERVICE).service.render
 
 .PHONY: build check typecheck test install deploy restart status logs
 
@@ -25,12 +27,15 @@ test:
 # ni la arranca. El deploy la activa cuando ya existe el .env de produccion.
 install:
 	sudo install -d -o $(DEPLOY_USER) -g $(DEPLOY_GROUP) -m 0750 $(DEST) $(DEST)/dist $(DEST)/config
+	rm -f $(RENDERED_UNIT)
 	sed -e 's|@DEPLOY_USER@|$(DEPLOY_USER)|g' \
 		-e 's|@DEPLOY_GROUP@|$(DEPLOY_GROUP)|g' \
 		-e 's|@DEPLOY_HOME@|$(DEPLOY_HOME)|g' \
 		-e 's|@DEST@|$(DEST)|g' \
 		-e 's|@NODE_BIN@|$(NODE_BIN)|g' \
-		deploy/$(SERVICE).service | sudo install -m 0644 /dev/stdin $(SYSTEMD_UNIT)
+		deploy/$(SERVICE).service > $(RENDERED_UNIT)
+	sudo install -m 0644 $(RENDERED_UNIT) $(SYSTEMD_UNIT)
+	rm -f $(RENDERED_UNIT)
 	sudo systemctl daemon-reload
 	if test ! -f $(DEST)/config/guilds.json; then sudo install -o $(DEPLOY_USER) -g $(DEPLOY_GROUP) -m 0600 config/guilds.json $(DEST)/config/guilds.json; fi
 
