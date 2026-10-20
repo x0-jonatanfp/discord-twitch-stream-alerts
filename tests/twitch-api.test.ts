@@ -93,7 +93,7 @@ describe("TwitchApi", () => {
     expect(streams[0]).toEqual({
       id: "stream-1", broadcasterId: "101", broadcasterLogin: "one", broadcasterName: "OneName", title: "Title",
       categoryName: "Game", startedAt: "2025-01-02T03:04:05Z", url: "https://www.twitch.tv/One",
-      thumbnailUrl: "https://images.example/stream-1280x720.jpg", viewerCount: 123,
+      thumbnailUrl: "https://images.example/stream-1280x720.jpg?v=stream-1", viewerCount: 123,
       profileImageUrl: "https://images.example/one.png", isLive: true,
     });
     const streamsRequest = fetchMock.mock.calls.find(([input]) => new URL(String(input)).pathname === "/helix/streams");

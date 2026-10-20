@@ -125,7 +125,10 @@ export class TwitchApi implements TwitchStreamsPort {
         categoryName: stream.game_name,
         startedAt: stream.started_at,
         url: `https://www.twitch.tv/${encodeURIComponent(stream.user_login)}`,
-        thumbnailUrl: stream.thumbnail_url.replace("{width}", "1280").replace("{height}", "720"),
+        thumbnailUrl: withCacheBuster(
+          stream.thumbnail_url.replace("{width}", "1280").replace("{height}", "720"),
+          stream.id,
+        ),
         viewerCount: stream.viewer_count,
         profileImageUrl: this.profileImageById.get(stream.user_id) ?? "",
         isLive: true as const,
@@ -226,4 +229,15 @@ export class TwitchApi implements TwitchStreamsPort {
     this.refreshToken = nextRefreshToken;
     this.tokenExpiresAt = expiresAt ?? null;
   }
+}
+
+/**
+ * Twitch's live preview URL is the same for every broadcast of a channel, so
+ * Discord serves its cached copy from a previous stream. The per-stream query
+ * parameter gives Discord a distinct URL without changing the CDN response.
+ */
+function withCacheBuster(url: string, streamId: string): string {
+  const preview = new URL(url);
+  preview.searchParams.set("v", streamId);
+  return preview.toString();
 }
