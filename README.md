@@ -1,6 +1,38 @@
 # Discord Twitch Stream Alerts
 
+![Discord Twitch Stream Alerts](assets/banner.svg)
+
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-22%2B-5FA04E?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![Twitch EventSub](https://img.shields.io/badge/Twitch-EventSub-9146FF?logo=twitch&logoColor=white)](https://dev.twitch.tv/docs/eventsub/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A TypeScript Discord bot that posts an alert when configured Twitch channels go live. Each Discord server has its own alert channel and Twitch channel list. Shared Twitch channels are monitored once and announced in every server that subscribes to them.
+
+## Features
+
+- Near-real-time alerts from Twitch EventSub `stream.online`, with Helix polling as a safety net.
+- One bot for many Discord guilds: each server has its own alert channel and Twitch channel list.
+- Shared Twitch channels are monitored once and announced in every guild that subscribes to them.
+- Per-subscriber delivery tracking retries failed sends without duplicating ones that already succeeded.
+- EventSub reconnects with backoff, transient Helix errors are retried, and startup is guarded.
+- Minimal Discord permissions and no message-content, member, or presence intents.
+
+## How it works
+
+```mermaid
+flowchart LR
+  ES["Twitch EventSub<br/>stream.online"] -->|near real-time| BOT["Bot<br/>TypeScript"]
+  HX["Twitch Helix<br/>polling every 60 s"] -->|reconcile| BOT
+  BOT -->|embed + @everyone| G1["Discord guild A<br/>alert channel"]
+  BOT -->|embed + @everyone| G2["Discord guild B<br/>alert channel"]
+```
+
+## Example alert
+
+![Example Twitch live alert](assets/alert-example.svg)
+
+*Illustrative example with fictional data. The real embed shows the stream preview, category, and viewer count.*
 
 ## Requirements
 
@@ -68,6 +100,17 @@ Build/run production JavaScript:
 ```bash
 pnpm build
 pnpm start
+```
+
+## Project layout
+
+```text
+src/
+  application/    reconciliation and subscriber indexing
+  domain/         entities and ports
+  infrastructure/ Discord, Twitch, persistence, and config adapters
+  index.ts        composition root and startup
+tests/            Vitest suite with fakes
 ```
 
 ## Despliegue con systemd

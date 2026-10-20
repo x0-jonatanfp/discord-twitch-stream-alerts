@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="400" viewBox="0 0 760 400" role="img" aria-labelledby="alert-title alert-desc">
+  <title id="alert-title">Ejemplo de aviso de directo en Discord</title>
+  <desc id="alert-desc">Mensaje de ejemplo con mención @everyone y un embed de Twitch</desc>
+  <defs>
+    <linearGradient id="avatar" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9146ff"/>
+      <stop offset="1" stop-color="#5865f2"/>
+    </linearGradient>
+    <linearGradient id="thumb" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2a1740"/>
+      <stop offset="1" stop-color="#13233d"/>
+    </linearGradient>
+  </defs>
+  <rect width="760" height="400" rx="16" fill="#313338"/>
+  <g font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif">
+    <circle cx="48" cy="52" r="22" fill="#5865f2"/>
+    <text x="48" y="58" text-anchor="middle" font-size="17" font-weight="700" fill="#ffffff">A</text>
+    <text x="84" y="46" font-size="16" font-weight="600" fill="#f2f3f5">Announcements</text>
+    <rect x="212" y="32" width="44" height="18" rx="4" fill="#5865f2"/>
+    <text x="234" y="45" text-anchor="middle" font-size="10" font-weight="700" fill="#ffffff">BOT</text>
+    <text x="268" y="46" font-size="12" fill="#949ba4">hoy a las 22:16</text>
+    <rect x="80" y="67" width="84" height="22" rx="4" fill="#5865f2" fill-opacity="0.32"/>
+    <text x="84" y="82" font-size="15" fill="#c9cdfb">@everyone,</text>
+    <text x="172" y="82" font-size="15" fill="#dbdee1"><tspan font-weight="700" fill="#ffffff">streamer_ejemplo</tspan> está ahora en directo: <tspan fill="#00a8fc">twitch.tv/streamer_ejemplo</tspan></text>
+    <rect x="84" y="102" width="620" height="240" rx="6" fill="#2b2d31"/>
+    <rect x="84" y="102" width="5" height="240" rx="2.5" fill="#9146ff"/>
+    <circle cx="116" cy="136" r="15" fill="url(#avatar)"/>
+    <text x="116" y="141" text-anchor="middle" font-size="12" font-weight="700" fill="#ffffff">S</text>
+    <text x="140" y="141" font-size="14" font-weight="600" fill="#f2f3f5">streamer_ejemplo</text>
+    <text x="108" y="180" font-size="17" font-weight="600" fill="#00a8fc">Un directo de ejemplo</text>
+    <text x="108" y="214" font-size="14" fill="#dbdee1">Categoría: Just Chatting</text>
+    <text x="108" y="240" font-size="14" fill="#dbdee1">Espectadores: 1.234</text>
+    <rect x="444" y="158" width="232" height="150" rx="8" fill="url(#thumb)"/>
+    <rect x="456" y="170" width="78" height="20" rx="10" fill="#e91916"/>
+    <text x="495" y="184" text-anchor="middle" font-size="9" font-weight="700" fill="#ffffff">EN DIRECTO</text>
+    <path d="M543 216 L543 250 L569 233 Z" fill="#ffffff" opacity="0.92"/>
+    <text x="380" y="376" text-anchor="middle" font-size="12" fill="#8f949c">Ejemplo ilustrativo con datos ficticios</text>
+  </g>
+</svg>
