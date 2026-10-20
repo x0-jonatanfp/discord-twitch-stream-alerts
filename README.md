@@ -14,6 +14,7 @@ A TypeScript Discord bot that posts an alert when configured Twitch channels go 
 - Near-real-time alerts from Twitch EventSub `stream.online`, with Helix polling as a safety net.
 - One bot for many Discord guilds: each server has its own alert channel and Twitch channel list.
 - Shared Twitch channels are monitored once and announced in every guild that subscribes to them.
+- The alert embed bar is Twitch purple while the stream is live and turns gray after it ends (detected by the reconciliation poll).
 - Per-subscriber delivery tracking retries failed sends without duplicating ones that already succeeded.
 - EventSub reconnects with backoff, transient Helix errors are retried, and startup is guarded.
 - Minimal Discord permissions and no message-content, member, or presence intents.
@@ -40,7 +41,7 @@ Twitch EventSub provides near-real-time `stream.online` events; Helix polling re
 ## Discord setup
 
 1. Create a Discord application and bot in the [Developer Portal](https://discord.com/developers/applications).
-2. Invite it to each guild with `bot` scope and the permissions `View Channels`, `Send Messages`, and `Embed Links`.
+2. Invite it to each guild with `bot` scope and the permissions `View Channels`, `Send Messages`, `Embed Links`, and `Read Message History`.
 3. No Administrator permission, message-content intent, or member/presence intent is needed.
 4. Copy the bot token to local `.env` as `DISCORD_TOKEN`.
 
