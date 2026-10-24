@@ -18,6 +18,7 @@ export interface AppConfig {
   guildConfigPath: string;
   liveStatePath: string;
   reconcileIntervalSeconds: number;
+  showViewerCount: boolean;
   twitchUserTokenExpiresAt: number | null;
   logLevel: string;
   envPath: string;
@@ -46,6 +47,14 @@ function parseOptionalEpoch(raw: string | null): number | null {
 function optionalEnv(env: Record<string, string | undefined>, key: string): string | null {
   const value = env[key]?.trim();
   return value ? value : null;
+}
+
+function parseShowViewerCount(raw: string | undefined): boolean {
+  if (raw === undefined) return false;
+  const value = raw.toLowerCase();
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new ConfigError("SHOW_VIEWER_COUNT must be true or false");
 }
 
 const botActivityTypes: readonly BotActivityType[] = ["Playing", "Streaming", "Listening", "Watching", "Custom", "Competing"];
@@ -92,6 +101,7 @@ export function parseAppConfig(
     throw new ConfigError("TWITCH_REDIRECT_URI must include an explicit local port greater than or equal to 1024");
   }
 
+  const showViewerCount = parseShowViewerCount(env.SHOW_VIEWER_COUNT);
   const rawInterval = optionalEnv(env, "TWITCH_RECONCILE_INTERVAL_SECONDS") ?? "60";
   const reconcileIntervalSeconds = Number(rawInterval);
   if (!Number.isInteger(reconcileIntervalSeconds) || reconcileIntervalSeconds < 15 || reconcileIntervalSeconds > 3600) {
@@ -112,6 +122,7 @@ export function parseAppConfig(
     guildConfigPath: resolve(optionalEnv(env, "GUILD_CONFIG_PATH") ?? "config/guilds.json"),
     liveStatePath: resolve(optionalEnv(env, "LIVE_STATE_PATH") ?? "data/live-state.json"),
     reconcileIntervalSeconds,
+    showViewerCount,
     twitchUserTokenExpiresAt: parseOptionalEpoch(optionalEnv(env, "TWITCH_USER_TOKEN_EXPIRES_AT")),
     logLevel: optionalEnv(env, "LOG_LEVEL") ?? "info",
     envPath: resolve(envPath),

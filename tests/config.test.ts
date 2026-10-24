@@ -18,9 +18,23 @@ describe("parseAppConfig", () => {
       botActivityState: null,
       botActivityUrl: null,
       reconcileIntervalSeconds: 60,
+      showViewerCount: false,
       guildConfigPath: expect.stringContaining("config/guilds.json"),
       liveStatePath: expect.stringContaining("data/live-state.json"),
     });
+  });
+
+  it.each(["true", "TRUE", "TrUe"])("enables viewer count for SHOW_VIEWER_COUNT=%s", (value) => {
+    expect(parseAppConfig({ ...base, SHOW_VIEWER_COUNT: value }).showViewerCount).toBe(true);
+  });
+
+  it.each(["false", "FALSE", "FaLsE"])("disables viewer count for SHOW_VIEWER_COUNT=%s", (value) => {
+    expect(parseAppConfig({ ...base, SHOW_VIEWER_COUNT: value }).showViewerCount).toBe(false);
+  });
+
+  it.each(["yes", "1", ""])("rejects invalid SHOW_VIEWER_COUNT value %j", (value) => {
+    expect(() => parseAppConfig({ ...base, SHOW_VIEWER_COUNT: value })).toThrow(ConfigError);
+    expect(() => parseAppConfig({ ...base, SHOW_VIEWER_COUNT: value })).toThrow(/SHOW_VIEWER_COUNT/);
   });
 
   it.each(["DISCORD_TOKEN", "TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET", "TWITCH_USER_ACCESS_TOKEN", "TWITCH_REFRESH_TOKEN"])(

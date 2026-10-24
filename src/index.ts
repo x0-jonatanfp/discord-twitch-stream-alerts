@@ -91,7 +91,7 @@ export interface MainDependencies {
   createLogger: (levelName: string) => LoggerPort;
   createTwitch: (config: AppConfig) => TwitchStreamsPort;
   createClient: () => BotClientPort;
-  createNotifier: (client: BotClientPort, logger: LoggerPort) => StreamNotifierPort;
+  createNotifier: (client: BotClientPort, logger: LoggerPort, config: AppConfig) => StreamNotifierPort;
   attachPresence: (client: BotClientPort, config: AppConfig, logger: LoggerPort) => () => void;
   createStateStore: (path: string, logger: LoggerPort) => LiveStateStorePort;
   validateChannels: CreateBotDependencies["validateChannels"];
@@ -108,7 +108,9 @@ export const defaultMainDependencies: MainDependencies = {
   createLogger: (levelName) => createLogger(levelName),
   createTwitch: (config) => new TwitchApi(config),
   createClient: () => new Client({ intents: [GatewayIntentBits.Guilds] }) as unknown as BotClientPort,
-  createNotifier: (client, logger) => createDiscordStreamNotifier(client as unknown as Client, logger),
+  createNotifier: (client, logger, config) => createDiscordStreamNotifier(client as unknown as Client, logger, {
+    showViewerCount: config.showViewerCount,
+  }),
   attachPresence: (client, config, logger) => attachPersistentPresence(client as unknown as Client, config, logger),
   createStateStore: (path, logger) => createJsonLiveStateStore(path, logger),
   validateChannels: (client, guilds, logger) => validateDiscordChannels(client as unknown as Client, guilds, logger),
@@ -324,7 +326,7 @@ export async function main(overrides: Partial<MainDependencies> = {}): Promise<v
   }
 
   const client = dependencies.createClient();
-  const notifier = dependencies.createNotifier(client, logger);
+  const notifier = dependencies.createNotifier(client, logger, config);
   const refreshPresence = dependencies.attachPresence(client, config, logger);
   const stateStore = dependencies.createStateStore(config.liveStatePath, logger);
 

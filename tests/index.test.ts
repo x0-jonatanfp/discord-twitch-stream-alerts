@@ -40,6 +40,7 @@ const config: AppConfig = {
   guildConfigPath: "/tmp/guilds.json",
   liveStatePath: "/tmp/state.json",
   reconcileIntervalSeconds: 60,
+  showViewerCount: false,
   logLevel: "info",
   envPath: "/tmp/.env",
   twitchUserTokenExpiresAt: null,
@@ -464,7 +465,7 @@ function createMainHarness(overrides: Partial<MainDependencies> = {}) {
     createLogger: () => logger,
     createTwitch: () => twitch,
     createClient: () => client,
-    createNotifier: () => notifier,
+    createNotifier: vi.fn(() => notifier),
     attachPresence: () => refreshPresence,
     createStateStore: () => stateStore.store,
     validateChannels,
@@ -588,6 +589,7 @@ describe("main", () => {
     await main(harness.dependencies);
 
     expect(harness.registerSignal.mock.calls.map(([signal]) => signal)).toEqual(["SIGINT", "SIGTERM"]);
+    expect(harness.dependencies.createNotifier).toHaveBeenCalledWith(harness.client, harness.logger, config);
     expect(harness.client.loginCalls).toEqual([config.discordToken]);
 
     const shutdownHandler = harness.registerSignal.mock.calls[0]?.[1] as (() => void) | undefined;

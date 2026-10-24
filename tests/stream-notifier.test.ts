@@ -37,7 +37,34 @@ function mockClient() {
   };
 }
 
+describe("buildStreamEmbed", () => {
+  it("omits viewer count by default without changing other embed fields", () => {
+    const embed = buildStreamEmbed(stream).toJSON();
+    expect(embed.description).toBe("🎮 **Categoría:** Game");
+    expect(embed.title).toBe("Hello Stream");
+    expect(embed.url).toBe(stream.url);
+    expect(embed.color).toBe(0x9146ff);
+    expect(embed.author).toMatchObject({ name: "Streamer", icon_url: stream.profileImageUrl });
+    expect(embed.image).toEqual({ url: stream.thumbnailUrl });
+  });
+
+  it("includes viewer count when explicitly enabled", () => {
+    expect(buildStreamEmbed(stream, { showViewerCount: true }).toJSON().description)
+      .toBe(`🎮 **Categoría:** Game\n👁️ **Espectadores:** 1234`);
+  });
+});
+
 describe("createDiscordStreamNotifier", () => {
+  it("sends viewer count when the notifier option is enabled", async () => {
+    const mock = mockClient();
+    const notifier = createDiscordStreamNotifier(mock.client, mock.logger, { showViewerCount: true });
+    await notifier.notify({ guildId: "guild-1", channelId: "channel-1", stream });
+    const payload = mock.send.mock.calls[0]?.[0] as {
+      embeds: Array<{ toJSON(): { description?: string } }>;
+    };
+    expect(payload.embeds[0]?.toJSON().description).toContain("👁️ **Espectadores:** 1234");
+  });
+
   it("sends an everyone notice and a standard embed with avatar, linked title, and stream image", async () => {
     const mock = mockClient();
     const notifier = createDiscordStreamNotifier(mock.client, mock.logger);
@@ -65,7 +92,7 @@ describe("createDiscordStreamNotifier", () => {
       image: { url: stream.thumbnailUrl },
       description: expect.stringContaining("**Categoría:** Game"),
     });
-    expect(payload.embeds[0]?.toJSON().description).toContain("**Espectadores:** 1234");
+    expect(payload.embeds[0]?.toJSON().description).not.toContain("**Espectadores:**");
   });
 
   it("uses a safe fallback title and category and omits a missing stream image", () => {

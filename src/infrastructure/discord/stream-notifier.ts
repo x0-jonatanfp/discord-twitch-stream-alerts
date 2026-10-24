@@ -18,6 +18,7 @@ export const ENDED_EMBED_COLOR = 0x4f545c;
 export function createDiscordStreamNotifier(
   client: Client,
   logger: LoggerPort,
+  options: { showViewerCount?: boolean } = {},
 ): StreamNotifierPort {
   return {
     async notify({ guildId, channelId, stream }) {
@@ -30,7 +31,7 @@ export function createDiscordStreamNotifier(
       }
       const message = await channel.send({
         content: `@everyone, **${stream.broadcasterLogin}** está ahora en directo: ${stream.url}`,
-        embeds: [buildStreamEmbed(stream)],
+        embeds: [buildStreamEmbed(stream, { showViewerCount: options.showViewerCount })],
         allowedMentions: { parse: ["everyone"] },
       });
       logger.info(`Posted Twitch live alert for ${stream.broadcasterLogin} in guild ${guildId}`);
@@ -96,7 +97,15 @@ export async function validateDiscordChannels(
   }
 }
 
-export function buildStreamEmbed(stream: LiveStream): EmbedBuilder {
+export function buildStreamEmbed(
+  stream: LiveStream,
+  options: { showViewerCount?: boolean } = {},
+): EmbedBuilder {
+  const description = [`🎮 **Categoría:** ${stream.categoryName || "Sin categoría"}`];
+  if (options.showViewerCount === true) {
+    description.push(`👁️ **Espectadores:** ${stream.viewerCount}`);
+  }
+
   const embed = new EmbedBuilder()
     .setColor(LIVE_EMBED_COLOR)
     .setAuthor({
@@ -105,10 +114,7 @@ export function buildStreamEmbed(stream: LiveStream): EmbedBuilder {
     })
     .setTitle(stream.title || "Directo en curso")
     .setURL(stream.url)
-    .setDescription([
-      `🎮 **Categoría:** ${stream.categoryName || "Sin categoría"}`,
-      `👁️ **Espectadores:** ${stream.viewerCount}`,
-    ].join("\n"));
+    .setDescription(description.join("\n"));
 
   if (stream.thumbnailUrl) embed.setImage(stream.thumbnailUrl);
   return embed;

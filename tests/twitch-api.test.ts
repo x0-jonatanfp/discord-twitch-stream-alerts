@@ -17,6 +17,7 @@ const config: AppConfig = {
   guildConfigPath: "/tmp/guilds.json",
   liveStatePath: "/tmp/state.json",
   reconcileIntervalSeconds: 60,
+  showViewerCount: false,
   logLevel: "info",
   envPath: "/tmp/.env",
   twitchUserTokenExpiresAt: null,
