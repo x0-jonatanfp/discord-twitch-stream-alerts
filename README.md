@@ -29,7 +29,7 @@ Twitch EventSub provides near-real-time `stream.online` events; Helix polling re
 
 ![Example Twitch live alert](assets/alert-example.svg)
 
-*Illustrative example with fictional data. The real embed shows the stream preview, category, and viewer count.*
+*Illustrative example with fictional data. The real embed shows the stream preview and category. Viewer count is hidden by default; set `SHOW_VIEWER_COUNT=true` in `.env` to opt in.*
 
 ## Requirements
 
@@ -83,6 +83,8 @@ Enable Developer Mode in Discord, then copy server and text channel IDs. Twitch 
 If a configured Twitch login cannot be resolved (the account was renamed or deleted), the bot logs a warning and keeps monitoring the remaining channels. Update `config/guilds.json` and restart to fix it.
 
 Bot presence matches `server-status`: `BOT_ACTIVITY_TYPE=Custom`, `BOT_ACTIVITY_NAME=x0void.com` and `BOT_ACTIVITY_STATE=🔗 x0void.com`. This free-form custom state is not a clickable link. `BOT_ACTIVITY_URL` is only used by a `Streaming` activity and then must be an HTTPS Twitch/YouTube URL. Presence is reapplied after Discord shard ready/resume events and each Twitch reconciliation cycle.
+
+Viewer counts are hidden from alert embeds by default. Set `SHOW_VIEWER_COUNT=true` in `.env` to opt in; `true` and `false` are case-insensitive, and any other value is rejected during startup.
 
 ## Run
 
