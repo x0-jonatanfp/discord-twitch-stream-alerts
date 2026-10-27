@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   EmbedBuilder,
   PermissionFlagsBits,
@@ -14,6 +15,10 @@ import type { LoggerPort } from "../../domain/ports/logger.js";
 export const LIVE_EMBED_COLOR = 0x9146ff;
 /** Discord's default embed gray, used once the broadcast has ended. */
 export const ENDED_EMBED_COLOR = 0x4f545c;
+
+const packageJson = JSON.parse(
+  readFileSync(new URL("../../../package.json", import.meta.url), "utf8"),
+) as { version: string };
 
 export function createDiscordStreamNotifier(
   client: Client,
@@ -114,7 +119,8 @@ export function buildStreamEmbed(
     })
     .setTitle(stream.title || "Directo en curso")
     .setURL(stream.url)
-    .setDescription(description.join("\n"));
+    .setDescription(description.join("\n"))
+    .setFooter({ text: `v${packageJson.version}` });
 
   if (stream.thumbnailUrl) embed.setImage(stream.thumbnailUrl);
   return embed;
