@@ -23,8 +23,9 @@ typecheck:
 test:
 	pnpm test
 
-# Instalacion inicial: prepara el destino e instala la unidad, pero no la habilita
-# ni la arranca. El deploy la activa cuando ya existe el .env de produccion.
+# Instalacion inicial: prepara el destino e instala la unidad, tmpfiles y
+# logrotate, pero no la habilita ni la arranca. El deploy la activa cuando ya
+# existe el .env de produccion.
 install:
 	sudo install -d -o $(DEPLOY_USER) -g $(DEPLOY_GROUP) -m 0750 $(DEST) $(DEST)/dist $(DEST)/config
 	rm -f $(RENDERED_UNIT)
@@ -36,6 +37,9 @@ install:
 		deploy/$(SERVICE).service > $(RENDERED_UNIT)
 	sudo install -m 0644 $(RENDERED_UNIT) $(SYSTEMD_UNIT)
 	rm -f $(RENDERED_UNIT)
+	sudo install -m 0644 deploy/$(SERVICE).tmpfiles.conf /etc/tmpfiles.d/$(SERVICE).conf
+	sudo install -m 0644 deploy/$(SERVICE).logrotate.conf /etc/logrotate.d/$(SERVICE)
+	sudo systemd-tmpfiles --create /etc/tmpfiles.d/$(SERVICE).conf
 	sudo systemctl daemon-reload
 	if test ! -f $(DEST)/config/guilds.json; then sudo install -o $(DEPLOY_USER) -g $(DEPLOY_GROUP) -m 0600 config/guilds.json $(DEST)/config/guilds.json; fi
 

@@ -13,8 +13,9 @@ User=@DEPLOY_USER@
 Group=@DEPLOY_GROUP@
 WorkingDirectory=@DEST@
 Environment=HOME=@DEPLOY_HOME@
-EnvironmentFile=@DEST@/.env
-ExecStart=@NODE_BIN@ dist/index.js
+# El lanzador de secretos carga @DEST@/.env (perfil srv:announcements), como el
+# resto de servicios de la maquina.
+ExecStart=@DEPLOY_HOME@/.secrets/bin/run srv:announcements -- @NODE_BIN@ dist/index.js
 Restart=always
 RestartSec=15
 UMask=0077

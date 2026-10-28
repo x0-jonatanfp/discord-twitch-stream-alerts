@@ -127,7 +127,7 @@ make install  # crea el destino, instala la unidad y la config; no la habilita n
 make deploy   # build, dependencias de producción y código; habilita si hace falta y reinicia la unidad
 ```
 
-Antes del primer `make deploy`, prepara `/srv/services/announcements/.env` con permisos `600` y `config/guilds.json` para producción. El deploy no copia `.env` y conserva la configuración de guild existente; `make install` crea esa configuración a partir de la copia local solo si aún no existe. La unidad carga el `.env` del destino con `EnvironmentFile=`; la aplicación también lo lee desde su directorio de trabajo.
+Antes del primer `make deploy`, prepara `/srv/services/announcements/.env` con permisos `600` y `config/guilds.json` para producción. El deploy no copia `.env` y conserva la configuración de guild existente; `make install` crea esa configuración a partir de la copia local solo si aún no existe. La unidad arranca con el lanzador de secretos (`~/.secrets/bin/run srv:announcements`), que carga el `.env` del destino; la aplicación también lo lee desde su directorio de trabajo. Con `LOG_FILE=/var/log/announcements.log` el bot escribe además en ese fichero, que crean `deploy/announcements.tmpfiles.conf` y rota `deploy/announcements.logrotate.conf` (los instala `make install`).
 
 `TWITCH_RECONCILE_INTERVAL_SECONDS` defaults to 60 (valid 15–3600). EventSub supplies normal near-real-time start notifications; Helix polling reconciles after reconnect/startup and recovers events missed while disconnected. State is stored under `data/live-state.json` by default.
 
