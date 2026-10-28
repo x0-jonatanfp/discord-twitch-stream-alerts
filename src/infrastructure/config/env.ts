@@ -21,6 +21,8 @@ export interface AppConfig {
   showViewerCount: boolean;
   twitchUserTokenExpiresAt: number | null;
   logLevel: string;
+  /** Fichero de log además de la consola; `null` = solo consola. */
+  logFile: string | null;
   envPath: string;
 }
 
@@ -101,6 +103,7 @@ export function parseAppConfig(
     throw new ConfigError("TWITCH_REDIRECT_URI must include an explicit local port greater than or equal to 1024");
   }
 
+  const logFile = optionalEnv(env, "LOG_FILE");
   const showViewerCount = parseShowViewerCount(env.SHOW_VIEWER_COUNT);
   const rawInterval = optionalEnv(env, "TWITCH_RECONCILE_INTERVAL_SECONDS") ?? "60";
   const reconcileIntervalSeconds = Number(rawInterval);
@@ -125,6 +128,7 @@ export function parseAppConfig(
     showViewerCount,
     twitchUserTokenExpiresAt: parseOptionalEpoch(optionalEnv(env, "TWITCH_USER_TOKEN_EXPIRES_AT")),
     logLevel: optionalEnv(env, "LOG_LEVEL") ?? "info",
+    logFile: logFile === null ? null : resolve(logFile),
     envPath: resolve(envPath),
   };
 }

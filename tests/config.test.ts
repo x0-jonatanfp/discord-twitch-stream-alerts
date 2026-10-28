@@ -99,6 +99,16 @@ describe("parseAppConfig", () => {
     expect(() => parseAppConfig({ ...base, TWITCH_RECONCILE_INTERVAL_SECONDS: interval })).toThrow(/TWITCH_RECONCILE_INTERVAL_SECONDS/);
   });
 
+  it("logs only to console unless LOG_FILE is set", () => {
+    expect(parseAppConfig(base).logFile).toBeNull();
+    expect(parseAppConfig({ ...base, LOG_FILE: "  " }).logFile).toBeNull();
+  });
+
+  it("resolves LOG_FILE to an absolute path", () => {
+    expect(parseAppConfig({ ...base, LOG_FILE: "/var/log/announcements.log" }).logFile).toBe("/var/log/announcements.log");
+    expect(parseAppConfig({ ...base, LOG_FILE: "logs/bot.log" }).logFile).toMatch(/^\/.*\/logs\/bot\.log$/);
+  });
+
   it("accepts configured interval bounds", () => {
     expect(parseAppConfig({ ...base, TWITCH_RECONCILE_INTERVAL_SECONDS: "15" }).reconcileIntervalSeconds).toBe(15);
     expect(parseAppConfig({ ...base, TWITCH_RECONCILE_INTERVAL_SECONDS: "3600" }).reconcileIntervalSeconds).toBe(3600);

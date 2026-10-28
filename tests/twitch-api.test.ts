@@ -19,6 +19,7 @@ const config: AppConfig = {
   reconcileIntervalSeconds: 60,
   showViewerCount: false,
   logLevel: "info",
+  logFile: null,
   envPath: "/tmp/.env",
   twitchUserTokenExpiresAt: null,
 };

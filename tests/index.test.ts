@@ -42,6 +42,7 @@ const config: AppConfig = {
   reconcileIntervalSeconds: 60,
   showViewerCount: false,
   logLevel: "info",
+  logFile: null,
   envPath: "/tmp/.env",
   twitchUserTokenExpiresAt: null,
 };
@@ -509,6 +510,21 @@ describe("main", () => {
     expect(consoleError).toHaveBeenCalledWith("Missing required environment variable DISCORD_TOKEN");
     expect(createLogger).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(1);
+  });
+
+  it("creates the logger with the configured level and log file", async () => {
+    const createLogger = vi.fn(() => createLoggerSpy());
+    const harness = createMainHarness({
+      loadConfig: () => ({ ...config, logFile: "/var/log/announcements.log" }),
+      createLogger,
+      loadGuildConfig: async () => {
+        throw new Error("stop after logger");
+      },
+    });
+
+    await main(harness.dependencies);
+
+    expect(createLogger).toHaveBeenCalledWith("info", "/var/log/announcements.log");
   });
 
   it("reports a broken guild configuration and does not log in", async () => {

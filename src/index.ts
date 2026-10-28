@@ -88,7 +88,7 @@ export class BotConfigurationError extends Error {
 export interface MainDependencies {
   loadConfig: () => AppConfig;
   loadGuildConfig: (path: string) => Promise<StreamSubscriptionConfig>;
-  createLogger: (levelName: string) => LoggerPort;
+  createLogger: (levelName: string, logFile: string | null) => LoggerPort;
   createTwitch: (config: AppConfig) => TwitchStreamsPort;
   createClient: () => BotClientPort;
   createNotifier: (client: BotClientPort, logger: LoggerPort, config: AppConfig) => StreamNotifierPort;
@@ -105,7 +105,7 @@ export interface MainDependencies {
 export const defaultMainDependencies: MainDependencies = {
   loadConfig: () => loadAppConfig(),
   loadGuildConfig: (path) => createGuildConfigAdapter(path).load(),
-  createLogger: (levelName) => createLogger(levelName),
+  createLogger: (levelName, logFile) => createLogger(levelName, logFile),
   createTwitch: (config) => new TwitchApi(config),
   createClient: () => new Client({ intents: [GatewayIntentBits.Guilds] }) as unknown as BotClientPort,
   createNotifier: (client, logger, config) => createDiscordStreamNotifier(client as unknown as Client, logger, {
@@ -295,7 +295,7 @@ export async function main(overrides: Partial<MainDependencies> = {}): Promise<v
     return;
   }
 
-  const logger = dependencies.createLogger(config.logLevel);
+  const logger = dependencies.createLogger(config.logLevel, config.logFile);
   let guildConfig: StreamSubscriptionConfig;
   try {
     guildConfig = await dependencies.loadGuildConfig(config.guildConfigPath);
