@@ -10,6 +10,7 @@ import type { LiveStream } from "../src/domain/entities/stream.js";
 const packageVersion = (JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 ) as { version: string }).version;
+const footerText = `Announcements v${packageVersion} · por @jonatanfp_ 💜`;
 
 const stream: LiveStream = {
   id: "stream-1", broadcasterId: "id-1", broadcasterLogin: "streamer", broadcasterName: "Streamer",
@@ -21,7 +22,7 @@ function mockClient() {
   const send = vi.fn(async (_payload: unknown) => ({ id: "message-1" }));
   const edit = vi.fn(async (_payload: unknown) => undefined);
   const fetchMessage = vi.fn(async (_messageId: string) => ({
-    embeds: [{ toJSON: () => ({ title: "Hello Stream", color: 0x9146ff, footer: { text: `v${packageVersion}` } }) }],
+    embeds: [{ toJSON: () => ({ title: "Hello Stream", color: 0x9146ff, footer: { text: footerText } }) }],
     edit,
   }));
   const fetchChannel = vi.fn(async (channelId: string) => ({
@@ -51,7 +52,7 @@ describe("buildStreamEmbed", () => {
     expect(embed.color).toBe(0x9146ff);
     expect(embed.author).toMatchObject({ name: "Streamer", icon_url: stream.profileImageUrl });
     expect(embed.image).toEqual({ url: stream.thumbnailUrl });
-    expect(embed.footer).toEqual({ text: `v${packageVersion}` });
+    expect(embed.footer).toEqual({ text: footerText });
   });
 
   it("includes viewer count when explicitly enabled", () => {
@@ -99,7 +100,7 @@ describe("createDiscordStreamNotifier", () => {
       description: expect.stringContaining("**Categoría:** Game"),
     });
     expect(payload.embeds[0]?.toJSON().description).not.toContain("**Espectadores:**");
-    expect(payload.embeds[0]?.toJSON().footer).toEqual({ text: `v${packageVersion}` });
+    expect(payload.embeds[0]?.toJSON().footer).toEqual({ text: footerText });
   });
 
   it("uses a safe fallback title and category and omits a missing stream image", () => {
@@ -168,7 +169,7 @@ describe("createDiscordStreamNotifier", () => {
     });
     expect(mock.fetchMessage).toHaveBeenCalledWith("message-1");
     expect(mock.edit).toHaveBeenCalledWith({
-      embeds: [{ title: "Hello Stream", color: 0x4f545c, footer: { text: `v${packageVersion}` } }],
+      embeds: [{ title: "Hello Stream", color: 0x4f545c, footer: { text: footerText } }],
     });
     expect(mock.logger.info).toHaveBeenCalledWith(expect.stringContaining("as ended"));
   });

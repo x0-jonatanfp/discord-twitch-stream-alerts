@@ -120,7 +120,7 @@ export function buildStreamEmbed(
     .setTitle(stream.title || "Directo en curso")
     .setURL(stream.url)
     .setDescription(description.join("\n"))
-    .setFooter({ text: `v${packageJson.version}` });
+    .setFooter({ text: `Announcements v${packageJson.version} · por @jonatanfp_ 💜` });
 
   if (stream.thumbnailUrl) embed.setImage(stream.thumbnailUrl);
   return embed;

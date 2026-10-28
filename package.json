@@ -1,6 +1,6 @@
 {
   "name": "discord-twitch-stream-alerts",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "private": true,
   "type": "module",
   "description": "Multi-guild Discord bot for Twitch live notifications",
