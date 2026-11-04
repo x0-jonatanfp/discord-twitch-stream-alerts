@@ -190,6 +190,7 @@ function createBotHarness(overrides: Partial<CreateBotDependencies> = {}) {
   const interval = createIntervalCapture();
   const validateChannels = vi.fn(async () => {});
   const refreshPresence = vi.fn();
+  const sleep = vi.fn(async (_milliseconds: number) => {});
 
   const dependencies: CreateBotDependencies = {
     config,
@@ -205,6 +206,7 @@ function createBotHarness(overrides: Partial<CreateBotDependencies> = {}) {
     createEventSub: eventSub.factory,
     setIntervalFn: interval.setIntervalFn,
     clearIntervalFn: interval.clearIntervalFn,
+    sleep,
     ...overrides,
   };
 
@@ -220,6 +222,7 @@ function createBotHarness(overrides: Partial<CreateBotDependencies> = {}) {
     interval,
     validateChannels,
     refreshPresence,
+    sleep,
   };
 }
 
@@ -340,6 +343,60 @@ describe("createBot", () => {
     });
   });
 
+  it("retries the Helix lookup when stream.online arrives before /streams lists the stream", async () => {
+    const harness = createBotHarness();
+    harness.getLiveStreams
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([liveStream]);
+    const bot = createBot(harness.dependencies);
+    await bot.start();
+    harness.client.emitReady();
+    await flushAsync();
+
+    await harness.eventSub.instances[0]?.options.onStreamOnline(onlineEvent);
+
+    expect(harness.getLiveStreams).toHaveBeenCalledTimes(3);
+    expect(harness.sleep).toHaveBeenCalledTimes(2);
+    expect(harness.sleep).toHaveBeenCalledWith(5_000);
+    expect(harness.notify).toHaveBeenCalledWith({
+      guildId: "guild-1",
+      channelId: "channel-1",
+      stream: liveStream,
+    });
+    expect(harness.logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("without Helix stream details"));
+  });
+
+  it("falls back after exhausting the Helix retries and warns about the missing thumbnail", async () => {
+    const harness = createBotHarness();
+    harness.getLiveStreams.mockResolvedValue([]);
+    const bot = createBot(harness.dependencies);
+    await bot.start();
+    harness.client.emitReady();
+    await flushAsync();
+
+    await harness.eventSub.instances[0]?.options.onStreamOnline(onlineEvent);
+
+    expect(harness.getLiveStreams).toHaveBeenCalledTimes(4);
+    expect(harness.sleep).toHaveBeenCalledTimes(3);
+    expect(harness.sleep).toHaveBeenCalledWith(5_000);
+    expect(harness.logger.warn).toHaveBeenCalledWith(expect.stringContaining("without Helix stream details"));
+    expect(harness.notify).toHaveBeenCalledWith({
+      guildId: "guild-1",
+      channelId: "channel-1",
+      stream: expect.objectContaining({
+        id: "stream-1",
+        broadcasterId: "101",
+        broadcasterLogin: "one",
+        title: "",
+        categoryName: "",
+        thumbnailUrl: "",
+        url: "https://www.twitch.tv/one",
+        isLive: true,
+      }),
+    });
+  });
+
   it("falls back to a minimal alert when the Helix lookup fails", async () => {
     const harness = createBotHarness();
     harness.getLiveStreams.mockRejectedValueOnce(new Error("network down"));
@@ -350,7 +407,10 @@ describe("createBot", () => {
 
     await harness.eventSub.instances[0]?.options.onStreamOnline(onlineEvent);
 
+    expect(harness.getLiveStreams).toHaveBeenCalledTimes(1);
+    expect(harness.sleep).not.toHaveBeenCalled();
     expect(harness.logger.warn).toHaveBeenCalledWith(expect.stringContaining("network down"));
+    expect(harness.logger.warn).toHaveBeenCalledWith(expect.stringContaining("without Helix stream details"));
     expect(harness.notify).toHaveBeenCalledWith({
       guildId: "guild-1",
       channelId: "channel-1",

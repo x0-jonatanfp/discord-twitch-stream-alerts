@@ -71,6 +71,7 @@ export interface CreateBotDependencies {
   createEventSub: CreateEventSub;
   setIntervalFn?: (callback: () => void, milliseconds: number) => IntervalHandle;
   clearIntervalFn?: (handle: IntervalHandle) => void;
+  sleep?: (milliseconds: number) => Promise<void>;
 }
 
 export interface BotRuntime {
@@ -155,6 +156,23 @@ export async function resolveChannelsWithRetry(
   throw lastError;
 }
 
+/** Extra Helix lookups when stream.online arrives before /streams lists the broadcast. */
+const STREAM_DETAILS_RETRIES = 3;
+const STREAM_DETAILS_RETRY_DELAY_MS = 5_000;
+
+async function fetchStreamDetailsWithRetry(
+  twitch: Pick<TwitchStreamsPort, "getLiveStreams">,
+  broadcasterId: string,
+  sleep: (milliseconds: number) => Promise<void>,
+): Promise<LiveStream | undefined> {
+  for (let attempt = 0; attempt <= STREAM_DETAILS_RETRIES; attempt += 1) {
+    const [stream] = await twitch.getLiveStreams([broadcasterId]);
+    if (stream) return stream;
+    if (attempt < STREAM_DETAILS_RETRIES) await sleep(STREAM_DETAILS_RETRY_DELAY_MS);
+  }
+  return undefined;
+}
+
 export function createBot(dependencies: CreateBotDependencies): BotRuntime {
   const {
     config,
@@ -191,6 +209,9 @@ export function createBot(dependencies: CreateBotDependencies): BotRuntime {
 
   const setIntervalFn = dependencies.setIntervalFn ?? ((callback, milliseconds) => setInterval(callback, milliseconds));
   const clearIntervalFn = dependencies.clearIntervalFn ?? ((handle) => clearInterval(handle as NodeJS.Timeout));
+  const sleep = dependencies.sleep ?? ((milliseconds: number) => new Promise<void>((resolve) => {
+    setTimeout(resolve, milliseconds);
+  }));
 
   let eventSub: EventSubPort | undefined;
   let reconcileTimer: IntervalHandle | undefined;
@@ -211,8 +232,7 @@ export function createBot(dependencies: CreateBotDependencies): BotRuntime {
       onStreamOnline: async (event) => {
         let stream: LiveStream | undefined;
         try {
-          const [liveStream] = await twitch.getLiveStreams([event.broadcaster_user_id]);
-          if (liveStream) stream = liveStream;
+          stream = await fetchStreamDetailsWithRetry(twitch, event.broadcaster_user_id, sleep);
         } catch (error) {
           logger.warn(`Could not fetch stream details for ${event.broadcaster_user_login}: ${errorMessage(error)}`);
         }
@@ -222,6 +242,9 @@ export function createBot(dependencies: CreateBotDependencies): BotRuntime {
             logger.warn(`Skipping Twitch alert for ${event.broadcaster_user_login}: broadcaster is not configured`);
             return;
           }
+          logger.warn(
+            `Posting Twitch alert for ${event.broadcaster_user_login} without Helix stream details (no thumbnail, title, or category)`,
+          );
           stream = {
             id: event.id,
             broadcasterId: event.broadcaster_user_id,
@@ -344,6 +367,7 @@ export async function main(overrides: Partial<MainDependencies> = {}): Promise<v
       stateStore,
       validateChannels: dependencies.validateChannels,
       createEventSub: dependencies.createEventSub,
+      sleep: dependencies.sleep,
     });
   } catch (error) {
     logger.error(error instanceof Error ? error.message : "Invalid bot configuration");
