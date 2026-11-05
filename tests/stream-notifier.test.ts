@@ -56,7 +56,7 @@ function imageResponse(init: { status?: number; type?: string; url?: string; bod
 
 // By default the preview is "not available", so tests never reach the network.
 beforeEach(() => {
-  vi.stubGlobal("fetch", vi.fn(async () => imageResponse({ status: 404 })));
+  vi.stubGlobal("fetch", vi.fn(async () => imageResponse({ type: "text/html" })));
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -234,6 +234,7 @@ describe("createDiscordStreamNotifier", () => {
 });
 
 describe("attached preview", () => {
+  const sleep = vi.fn(async (_milliseconds: number) => undefined);
   const notifyWith = async (fetchFn: typeof fetch, channelExtras: Record<string, unknown> = {}) => {
     const mock = mockClient();
     if (Object.keys(channelExtras).length > 0) {
@@ -245,7 +246,7 @@ describe("attached preview", () => {
     await createDiscordStreamNotifier(
       { ...(mock.client as object), user: channelExtras.permissionsFor ? { id: "bot" } : undefined } as never,
       mock.logger,
-      { fetchFn },
+      { fetchFn, sleep },
     ).notify({ guildId: "guild-1", channelId: "channel-1", stream });
     return mock;
   };
@@ -261,8 +262,6 @@ describe("attached preview", () => {
   });
 
   it.each([
-    ["a 404", { status: 404 }],
-    ["Twitch's offline placeholder", { url: "https://static-cdn.jtvnw.net/ttv-static/404_preview-1280x720.jpg" }],
     ["a non-image response", { type: "text/html" }],
     ["an empty body", { body: "" }],
   ])("falls back to the image URL on %s", async (_name, init) => {
@@ -271,6 +270,33 @@ describe("attached preview", () => {
     expect(payload.files).toBeUndefined();
     expect(payload.embeds[0]?.toJSON().image).toEqual({ url: stream.thumbnailUrl });
     expect(mock.logger.warn).toHaveBeenCalled();
+  });
+
+  it("waits for Twitch to render the first preview and then attaches it", async () => {
+    sleep.mockClear();
+    const placeholder = () => imageResponse({ url: "https://static-cdn.jtvnw.net/ttv-static/404_preview-1280x720.jpg" });
+    const fetchFn = vi.fn()
+      .mockImplementationOnce(async () => placeholder())
+      .mockImplementationOnce(async () => imageResponse({ status: 404 }))
+      .mockImplementation(async () => imageResponse());
+    const mock = await notifyWith(fetchFn as never);
+    const payload = mock.send.mock.calls[0]?.[0] as Payload;
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(payload.files?.[0]?.attachment.toString()).toBe("jpeg-bytes");
+    expect(payload.embeds[0]?.toJSON().image).toEqual({ url: `attachment://${THUMBNAIL_FILE_NAME}` });
+  });
+
+  it("posts without any image when the preview never leaves the placeholder", async () => {
+    sleep.mockClear();
+    const fetchFn = vi.fn(async () => imageResponse({ url: "https://static-cdn.jtvnw.net/ttv-static/404_preview-1280x720.jpg" }));
+    const mock = await notifyWith(fetchFn as never);
+    const payload = mock.send.mock.calls[0]?.[0] as Payload;
+    expect(fetchFn).toHaveBeenCalledTimes(7);
+    expect(sleep).toHaveBeenCalledTimes(6);
+    expect(payload.files).toBeUndefined();
+    expect(payload.embeds[0]?.toJSON().image).toBeUndefined();
+    expect(mock.logger.warn).toHaveBeenCalledWith(expect.stringContaining("without image"));
   });
 
   it("falls back to the image URL when the download throws", async () => {

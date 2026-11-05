@@ -24,43 +24,74 @@ const packageJson = JSON.parse(
 export const THUMBNAIL_FILE_NAME = "preview.jpg";
 const THUMBNAIL_TIMEOUT_MS = 10_000;
 
+/** Twitch needs a while after going live to render the first preview. */
+const PREVIEW_RETRIES = 6;
+const PREVIEW_RETRY_DELAY_MS = 15_000;
+
+type ThumbnailResult =
+  | { kind: "ready"; bytes: Buffer }
+  | { kind: "pending" }
+  | { kind: "failed" };
+
 /**
  * Downloads the live preview so it can be attached to the message. A hotlinked
  * Twitch preview is re-resolved by Discord when the message is edited, and once
- * the channel is offline Twitch answers with a 404 placeholder, so the image
- * vanishes when the alert is marked as ended. Returns undefined when the
- * preview is not available yet (the caller then falls back to the plain URL).
+ * the channel is offline (or right after going live) Twitch answers with a
+ * generic 404 placeholder: the same picture for every broadcast. "pending"
+ * means exactly that placeholder; "failed" is any other problem.
  */
 async function downloadThumbnail(
   url: string,
   fetchFn: typeof fetch,
   logger: LoggerPort,
-): Promise<Buffer | undefined> {
+): Promise<ThumbnailResult> {
   try {
     const response = await fetchFn(url, { signal: AbortSignal.timeout(THUMBNAIL_TIMEOUT_MS) });
+    if (!response.ok || response.url.includes("404_preview")) return { kind: "pending" };
     const contentType = response.headers.get("content-type") ?? "";
-    if (!response.ok || !contentType.startsWith("image/") || response.url.includes("404_preview")) {
-      logger.warn(`Twitch preview not available yet (${response.status}); posting alert with the image URL`);
-      return undefined;
+    if (!contentType.startsWith("image/")) {
+      logger.warn(`Twitch preview is not an image (${contentType || "no content-type"}); posting alert with the image URL`);
+      return { kind: "failed" };
     }
     const bytes = Buffer.from(await response.arrayBuffer());
     if (bytes.length === 0) {
       logger.warn("Twitch preview came back empty; posting alert with the image URL");
-      return undefined;
+      return { kind: "failed" };
     }
-    return bytes;
+    return { kind: "ready", bytes };
   } catch (error) {
     logger.warn(`Could not download Twitch preview: ${errorMessage(error)}; posting alert with the image URL`);
-    return undefined;
+    return { kind: "failed" };
   }
+}
+
+async function waitForThumbnail(
+  url: string,
+  fetchFn: typeof fetch,
+  sleep: (milliseconds: number) => Promise<void>,
+  logger: LoggerPort,
+): Promise<ThumbnailResult> {
+  let result = await downloadThumbnail(url, fetchFn, logger);
+  for (let attempt = 0; attempt < PREVIEW_RETRIES && result.kind === "pending"; attempt += 1) {
+    await sleep(PREVIEW_RETRY_DELAY_MS);
+    result = await downloadThumbnail(url, fetchFn, logger);
+  }
+  return result;
 }
 
 export function createDiscordStreamNotifier(
   client: Client,
   logger: LoggerPort,
-  options: { showViewerCount?: boolean; fetchFn?: typeof fetch } = {},
+  options: {
+    showViewerCount?: boolean;
+    fetchFn?: typeof fetch;
+    sleep?: (milliseconds: number) => Promise<void>;
+  } = {},
 ): StreamNotifierPort {
   const fetchFn = options.fetchFn ?? fetch;
+  const sleep = options.sleep ?? ((milliseconds: number) => new Promise<void>((resolve) => {
+    setTimeout(resolve, milliseconds);
+  }));
   return {
     async notify({ guildId, channelId, stream }) {
       const channel = await client.channels.fetch(channelId);
@@ -76,10 +107,17 @@ export function createDiscordStreamNotifier(
       const canAttach = !user || !("permissionsFor" in channel)
         || (channel.permissionsFor(user)?.has(PermissionFlagsBits.AttachFiles) ?? false);
       if (!canAttach) logger.warn(`Missing Attach Files permission in channel ${channelId}; posting alert with the image URL`);
-      const thumbnail = stream.thumbnailUrl && canAttach
-        ? await downloadThumbnail(stream.thumbnailUrl, fetchFn, logger)
-        : undefined;
-      if (thumbnail) embed.setImage(`attachment://${THUMBNAIL_FILE_NAME}`);
+      const preview: ThumbnailResult = stream.thumbnailUrl && canAttach
+        ? await waitForThumbnail(stream.thumbnailUrl, fetchFn, sleep, logger)
+        : { kind: "failed" };
+      const thumbnail = preview.kind === "ready" ? preview.bytes : undefined;
+      if (thumbnail) {
+        embed.setImage(`attachment://${THUMBNAIL_FILE_NAME}`);
+      } else if (preview.kind === "pending") {
+        // Hotlinking now would make Discord cache Twitch's generic placeholder.
+        embed.setImage(null);
+        logger.warn(`Twitch preview for ${stream.broadcasterLogin} was not ready after ${PREVIEW_RETRIES} retries; posting alert without image`);
+      }
       const message = await channel.send({
         content: `@everyone, **${stream.broadcasterLogin}** está ahora en directo: ${stream.url}`,
         embeds: [embed],
