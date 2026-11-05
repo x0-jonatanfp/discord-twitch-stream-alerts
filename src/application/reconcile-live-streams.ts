@@ -17,11 +17,7 @@ export interface ReconciliationDependencies {
   notifier: StreamNotifierPort;
   stateStore: LiveStateStorePort;
   logger: LoggerPort;
-  now?: () => number;
 }
-
-/** Twitch renders a new preview about every five minutes. */
-const PREVIEW_REFRESH_MS = 5 * 60 * 1000;
 
 export function createLiveStreamReconciler(dependencies: ReconciliationDependencies) {
   const allBroadcasterIds = [...dependencies.subscribersByBroadcasterId.keys()];
@@ -30,10 +26,9 @@ export function createLiveStreamReconciler(dependencies: ReconciliationDependenc
   let stateDirty = false;
   let reconcileInFlight: Promise<void> | null = null;
   let stateQueue: Promise<void> = Promise.resolve();
-  // When each live alert's preview was last refreshed. Memory only: after a
-  // restart every live alert is refreshed once on the next poll.
-  const lastPreviewRefresh = new Map<string, number>();
-  const now = dependencies.now ?? Date.now;
+  // Alerts whose preview is already frozen into the message. Memory only: after
+  // a restart each live alert is checked once more, which is a single API call.
+  const previewSettled = new Set<string>();
 
   function enqueueStateChange(task: () => Promise<void>): Promise<void> {
     const operation = stateQueue.then(task);
@@ -67,7 +62,7 @@ export function createLiveStreamReconciler(dependencies: ReconciliationDependenc
         : { streamId: stream.id, deliveredTo: [], alerts: [] };
 
       await deliverPending(stream, entry, subscribers);
-      await refreshPreviews(stream, entry);
+      await freezePreviews(stream, entry);
       currentState[stream.broadcasterId] = entry;
     }
 
@@ -118,28 +113,27 @@ export function createLiveStreamReconciler(dependencies: ReconciliationDependenc
   }
 
   /**
-   * Keeps the live alerts' picture current (Twitch renders a new preview about
-   * every five minutes). Ended alerts are never part of this: they leave the
-   * state when the stream ends and are not edited again.
+   * Twitch serves the same preview URL for every broadcast of a channel and a
+   * placeholder once it is offline, so a hotlinked image changes (or vanishes)
+   * after the alert is posted. Once a real preview exists it is attached.
    */
-  async function refreshPreviews(stream: LiveStream, entry: LiveStreamStateEntry): Promise<void> {
+  async function freezePreviews(stream: LiveStream, entry: LiveStreamStateEntry): Promise<void> {
     if (!stream.thumbnailUrl) return;
     for (const alert of entry.alerts) {
-      const last = lastPreviewRefresh.get(alert.messageId);
-      if (last !== undefined && now() - last < PREVIEW_REFRESH_MS) continue;
-      lastPreviewRefresh.set(alert.messageId, now());
+      if (previewSettled.has(alert.messageId)) continue;
       try {
-        await dependencies.notifier.refreshPreview({ ...alert, thumbnailUrl: stream.thumbnailUrl });
+        if (await dependencies.notifier.attachPreview({ ...alert, thumbnailUrl: stream.thumbnailUrl })) {
+          previewSettled.add(alert.messageId);
+        }
       } catch (error) {
         dependencies.logger.warn(
-          `Could not refresh the preview of Twitch alert ${alert.messageId}: ${errorMessage(error)}`,
+          `Could not attach the preview to Twitch alert ${alert.messageId}: ${errorMessage(error)}`,
         );
       }
     }
   }
 
   async function endStream(entry: LiveStreamStateEntry): Promise<void> {
-    for (const alert of entry.alerts) lastPreviewRefresh.delete(alert.messageId);
     if (entry.alerts.length === 0) return;
     const results = await Promise.allSettled(entry.alerts.map((alert) =>
       dependencies.notifier.markStreamEnded(alert),
@@ -198,7 +192,6 @@ export function createLiveStreamReconciler(dependencies: ReconciliationDependenc
       if (result.status === "fulfilled") {
         if (subscriber) {
           entry.deliveredTo.push(subscriberKey(subscriber));
-          lastPreviewRefresh.set(result.value.messageId, now());
           entry.alerts.push({
             guildId: subscriber.guildId,
             channelId: subscriber.channelId,
