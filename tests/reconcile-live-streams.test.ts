@@ -25,7 +25,8 @@ function fixture(options: { saved?: LiveStreamState; live?: LiveStream[] } = {})
   let messageCounter = 0;
   const notify = vi.fn(async () => ({ messageId: `message-${++messageCounter}` }));
   const markStreamEnded = vi.fn(async () => undefined);
-  const attachPreview = vi.fn(async (_input: unknown) => true);
+  let clock = 0;
+  const refreshPreview = vi.fn(async (_input: unknown) => {});
   let saved: LiveStreamState = structuredClone(options.saved ?? {});
   const stateStore = {
     load: vi.fn(async () => structuredClone(saved)),
@@ -42,11 +43,12 @@ function fixture(options: { saved?: LiveStreamState; live?: LiveStream[] } = {})
   const reconciler = createLiveStreamReconciler({
     subscribersByBroadcasterId: index.subscribersByBroadcasterId,
     twitch,
-    notifier: { notify, markStreamEnded, attachPreview },
+    notifier: { notify, markStreamEnded, refreshPreview },
+    now: () => clock,
     stateStore,
     logger,
   });
-  return { notify, markStreamEnded, attachPreview, stateStore, twitch, logger, reconciler, get saved() { return saved; } };
+  return { advance: (ms: number) => { clock += ms; }, notify, markStreamEnded, refreshPreview, stateStore, twitch, logger, reconciler, get saved() { return saved; } };
 }
 
 describe("createLiveStreamReconciler", () => {
@@ -219,35 +221,62 @@ describe("createLiveStreamReconciler", () => {
     expect(f.saved).toEqual({});
   });
 
-  it("freezes the preview of every live alert and stops asking once it is attached", async () => {
+  it("does not re-upload right after posting, then refreshes every five minutes", async () => {
     const f = fixture();
     await f.reconciler.reconcile();
-    expect(f.attachPreview).toHaveBeenCalledTimes(2);
-    expect(f.attachPreview).toHaveBeenCalledWith({
+    expect(f.refreshPreview).not.toHaveBeenCalled();
+    f.advance(4 * 60_000);
+    await f.reconciler.reconcile();
+    expect(f.refreshPreview).not.toHaveBeenCalled();
+    f.advance(60_000);
+    await f.reconciler.reconcile();
+    expect(f.refreshPreview).toHaveBeenCalledTimes(2);
+    expect(f.refreshPreview).toHaveBeenCalledWith({
       guildId: "guild-a", channelId: "alerts-a", messageId: "message-1", thumbnailUrl: stream.thumbnailUrl,
     });
-    f.attachPreview.mockClear();
+    f.advance(60_000);
     await f.reconciler.reconcile();
-    expect(f.attachPreview).not.toHaveBeenCalled();
+    expect(f.refreshPreview).toHaveBeenCalledTimes(2);
   });
 
-  it("retries the preview on the next poll while Twitch still has no real one", async () => {
-    const f = fixture();
-    f.attachPreview.mockResolvedValueOnce(false).mockResolvedValueOnce(true).mockResolvedValue(true);
+  it("refreshes alerts restored from state on the first poll after a restart", async () => {
+    const alert = { guildId: "guild-a", channelId: "alerts-a", messageId: "old-message" };
+    const f = fixture({
+      saved: { "id-1": { streamId: "stream-1", deliveredTo: ["guild-a:alerts-a", "guild-b:alerts-b"], alerts: [alert] } },
+    });
     await f.reconciler.reconcile();
-    f.attachPreview.mockClear();
-    await f.reconciler.reconcile();
-    expect(f.attachPreview).toHaveBeenCalledTimes(1);
-    expect(f.attachPreview).toHaveBeenCalledWith(expect.objectContaining({ messageId: "message-1" }));
+    expect(f.refreshPreview).toHaveBeenCalledWith(expect.objectContaining({ messageId: "old-message" }));
   });
 
-  it("logs and keeps going when attaching a preview fails", async () => {
-    const f = fixture();
-    f.attachPreview.mockRejectedValueOnce(new Error("Discord 500"));
+  it("logs and keeps going when refreshing a preview fails, retrying after five minutes", async () => {
+    const alert = { guildId: "guild-a", channelId: "alerts-a", messageId: "old-message" };
+    const f = fixture({
+      saved: { "id-1": { streamId: "stream-1", deliveredTo: ["guild-a:alerts-a", "guild-b:alerts-b"], alerts: [alert] } },
+    });
+    f.refreshPreview.mockRejectedValueOnce(new Error("Discord 500"));
     await f.reconciler.reconcile();
     expect(f.logger.warn).toHaveBeenCalledWith(expect.stringContaining("Discord 500"));
-    expect(f.attachPreview).toHaveBeenCalledTimes(2);
-    expect(f.notify).toHaveBeenCalledTimes(2);
+    f.advance(60_000);
+    await f.reconciler.reconcile();
+    expect(f.refreshPreview).toHaveBeenCalledOnce();
+    f.advance(5 * 60_000);
+    await f.reconciler.reconcile();
+    expect(f.refreshPreview).toHaveBeenCalledTimes(2);
+  });
+
+  it("never touches an alert again once its stream ended", async () => {
+    const alert = { guildId: "guild-a", channelId: "alerts-a", messageId: "old-message" };
+    const f = fixture({
+      saved: { "id-1": { streamId: "stream-1", deliveredTo: ["guild-a:alerts-a", "guild-b:alerts-b"], alerts: [alert] } },
+      live: [],
+    });
+    await f.reconciler.reconcile();
+    expect(f.markStreamEnded).toHaveBeenCalledOnce();
+    f.markStreamEnded.mockClear();
+    f.advance(10 * 60_000);
+    await f.reconciler.reconcile();
+    expect(f.markStreamEnded).not.toHaveBeenCalled();
+    expect(f.refreshPreview).not.toHaveBeenCalled();
   });
 
   it("marks the previous stream as ended when a new one replaces it", async () => {
