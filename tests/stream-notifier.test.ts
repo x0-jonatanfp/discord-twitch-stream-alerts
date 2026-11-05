@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it, vi } from "vitest";
+import { PermissionFlagsBits } from "discord.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  THUMBNAIL_FILE_NAME,
   buildStreamEmbed,
   createDiscordStreamNotifier,
   validateDiscordChannels,
@@ -42,6 +44,23 @@ function mockClient() {
     logger,
   };
 }
+
+function imageResponse(init: { status?: number; type?: string; url?: string; body?: string } = {}) {
+  const response = new Response(init.body ?? "jpeg-bytes", {
+    status: init.status ?? 200,
+    headers: { "content-type": init.type ?? "image/jpeg" },
+  });
+  Object.defineProperty(response, "url", { value: init.url ?? "https://images.example/frame.jpg" });
+  return response;
+}
+
+// By default the preview is "not available", so tests never reach the network.
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn(async () => imageResponse({ status: 404 })));
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("buildStreamEmbed", () => {
   it("omits viewer count by default without changing other embed fields", () => {
@@ -211,5 +230,91 @@ describe("createDiscordStreamNotifier", () => {
       channelId: "channel-1",
       messageId: "missing",
     })).rejects.toThrow("Unknown Message");
+  });
+});
+
+describe("attached preview", () => {
+  const notifyWith = async (fetchFn: typeof fetch, channelExtras: Record<string, unknown> = {}) => {
+    const mock = mockClient();
+    if (Object.keys(channelExtras).length > 0) {
+      mock.fetchChannel.mockResolvedValueOnce({
+        isTextBased: () => true, send: mock.send, channelId: "channel-1", guildId: "guild-1",
+        messages: { fetch: mock.fetchMessage }, ...channelExtras,
+      } as never);
+    }
+    await createDiscordStreamNotifier(
+      { ...(mock.client as object), user: channelExtras.permissionsFor ? { id: "bot" } : undefined } as never,
+      mock.logger,
+      { fetchFn },
+    ).notify({ guildId: "guild-1", channelId: "channel-1", stream });
+    return mock;
+  };
+  type Payload = { embeds: Array<{ toJSON(): { image?: { url: string } } }>; files?: Array<{ name: string; attachment: Buffer }> };
+
+  it("downloads the preview and attaches it so the image survives edits", async () => {
+    const mock = await notifyWith(vi.fn(async () => imageResponse()) as never);
+    const payload = mock.send.mock.calls[0]?.[0] as Payload;
+    expect(payload.files).toHaveLength(1);
+    expect(payload.files?.[0]?.name).toBe(THUMBNAIL_FILE_NAME);
+    expect(payload.files?.[0]?.attachment.toString()).toBe("jpeg-bytes");
+    expect(payload.embeds[0]?.toJSON().image).toEqual({ url: `attachment://${THUMBNAIL_FILE_NAME}` });
+  });
+
+  it.each([
+    ["a 404", { status: 404 }],
+    ["Twitch's offline placeholder", { url: "https://static-cdn.jtvnw.net/ttv-static/404_preview-1280x720.jpg" }],
+    ["a non-image response", { type: "text/html" }],
+    ["an empty body", { body: "" }],
+  ])("falls back to the image URL on %s", async (_name, init) => {
+    const mock = await notifyWith(vi.fn(async () => imageResponse(init)) as never);
+    const payload = mock.send.mock.calls[0]?.[0] as Payload;
+    expect(payload.files).toBeUndefined();
+    expect(payload.embeds[0]?.toJSON().image).toEqual({ url: stream.thumbnailUrl });
+    expect(mock.logger.warn).toHaveBeenCalled();
+  });
+
+  it("falls back to the image URL when the download throws", async () => {
+    const mock = await notifyWith(vi.fn(async () => { throw new Error("timeout"); }) as never);
+    const payload = mock.send.mock.calls[0]?.[0] as Payload;
+    expect(payload.files).toBeUndefined();
+    expect(mock.logger.warn).toHaveBeenCalledWith(expect.stringContaining("timeout"));
+  });
+
+  it("does not upload when the bot lacks Attach Files", async () => {
+    const fetchFn = vi.fn(async () => imageResponse());
+    const mock = await notifyWith(fetchFn as never, { permissionsFor: () => ({ has: () => false }) });
+    const payload = mock.send.mock.calls[0]?.[0] as Payload;
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(payload.files).toBeUndefined();
+    expect(mock.logger.warn).toHaveBeenCalledWith(expect.stringContaining("Attach Files"));
+  });
+
+  it("keeps the preview on the ended embed by re-referencing the attachment", async () => {
+    const mock = mockClient();
+    mock.fetchMessage.mockResolvedValueOnce({
+      embeds: [{ toJSON: () => ({ title: "Hello Stream", color: 0x9146ff, image: { url: "https://cdn.discordapp.com/expired" } }) }],
+      attachments: { some: (fn: (a: { name: string }) => boolean) => fn({ name: THUMBNAIL_FILE_NAME }) },
+      edit: mock.edit,
+    } as never);
+    await createDiscordStreamNotifier(mock.client, mock.logger).markStreamEnded({
+      guildId: "guild-1", channelId: "channel-1", messageId: "message-1",
+    });
+    expect(mock.edit).toHaveBeenCalledWith({
+      embeds: [{ title: "Hello Stream", color: 0x4f545c, image: { url: `attachment://${THUMBNAIL_FILE_NAME}` } }],
+    });
+  });
+
+  it("warns at startup when a channel lacks Attach Files", async () => {
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const has = (flag: bigint) => flag !== PermissionFlagsBits.AttachFiles;
+    const client = {
+      user: { id: "bot" },
+      channels: { fetch: async () => ({
+        isTextBased: () => true, send: () => undefined, guildId: "guild-1", permissionsFor: () => ({ has }),
+      }) },
+    } as never;
+    await validateDiscordChannels(client, [{ guildId: "guild-1", alertChannelId: "c", twitchChannels: ["s"] }], log);
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("Attach Files"));
+    expect(log.error).not.toHaveBeenCalled();
   });
 });

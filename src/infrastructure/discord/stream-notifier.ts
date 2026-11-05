@@ -20,11 +20,47 @@ const packageJson = JSON.parse(
   readFileSync(new URL("../../../package.json", import.meta.url), "utf8"),
 ) as { version: string };
 
+/** Name of the preview attached to the alert so the image survives later edits. */
+export const THUMBNAIL_FILE_NAME = "preview.jpg";
+const THUMBNAIL_TIMEOUT_MS = 10_000;
+
+/**
+ * Downloads the live preview so it can be attached to the message. A hotlinked
+ * Twitch preview is re-resolved by Discord when the message is edited, and once
+ * the channel is offline Twitch answers with a 404 placeholder, so the image
+ * vanishes when the alert is marked as ended. Returns undefined when the
+ * preview is not available yet (the caller then falls back to the plain URL).
+ */
+async function downloadThumbnail(
+  url: string,
+  fetchFn: typeof fetch,
+  logger: LoggerPort,
+): Promise<Buffer | undefined> {
+  try {
+    const response = await fetchFn(url, { signal: AbortSignal.timeout(THUMBNAIL_TIMEOUT_MS) });
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!response.ok || !contentType.startsWith("image/") || response.url.includes("404_preview")) {
+      logger.warn(`Twitch preview not available yet (${response.status}); posting alert with the image URL`);
+      return undefined;
+    }
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length === 0) {
+      logger.warn("Twitch preview came back empty; posting alert with the image URL");
+      return undefined;
+    }
+    return bytes;
+  } catch (error) {
+    logger.warn(`Could not download Twitch preview: ${errorMessage(error)}; posting alert with the image URL`);
+    return undefined;
+  }
+}
+
 export function createDiscordStreamNotifier(
   client: Client,
   logger: LoggerPort,
-  options: { showViewerCount?: boolean } = {},
+  options: { showViewerCount?: boolean; fetchFn?: typeof fetch } = {},
 ): StreamNotifierPort {
+  const fetchFn = options.fetchFn ?? fetch;
   return {
     async notify({ guildId, channelId, stream }) {
       const channel = await client.channels.fetch(channelId);
@@ -34,9 +70,20 @@ export function createDiscordStreamNotifier(
       if (!("guildId" in channel) || channel.guildId !== guildId) {
         throw new Error(`Configured Discord channel ${channelId} does not belong to guild ${guildId}`);
       }
+      const embed = buildStreamEmbed(stream, { showViewerCount: options.showViewerCount });
+      // Without Attach Files the upload would reject the whole alert, so fall back to the URL.
+      const user = client.user;
+      const canAttach = !user || !("permissionsFor" in channel)
+        || (channel.permissionsFor(user)?.has(PermissionFlagsBits.AttachFiles) ?? false);
+      if (!canAttach) logger.warn(`Missing Attach Files permission in channel ${channelId}; posting alert with the image URL`);
+      const thumbnail = stream.thumbnailUrl && canAttach
+        ? await downloadThumbnail(stream.thumbnailUrl, fetchFn, logger)
+        : undefined;
+      if (thumbnail) embed.setImage(`attachment://${THUMBNAIL_FILE_NAME}`);
       const message = await channel.send({
         content: `@everyone, **${stream.broadcasterLogin}** está ahora en directo: ${stream.url}`,
-        embeds: [buildStreamEmbed(stream, { showViewerCount: options.showViewerCount })],
+        embeds: [embed],
+        ...(thumbnail ? { files: [{ attachment: thumbnail, name: THUMBNAIL_FILE_NAME }] } : {}),
         allowedMentions: { parse: ["everyone"] },
       });
       logger.info(`Posted Twitch live alert for ${stream.broadcasterLogin} in guild ${guildId}`);
@@ -56,7 +103,16 @@ export function createDiscordStreamNotifier(
         logger.warn(`Alert message ${messageId} in channel ${channelId} has no embed to mark as ended`);
         return;
       }
-      await message.edit({ embeds: [{ ...embed.toJSON(), color: ENDED_EMBED_COLOR }] });
+      // Re-reference the attached preview: the CDN URL Discord stored in the
+      // embed is signed and expires, while attachment:// always resolves.
+      const hasAttachedPreview = message.attachments?.some((attachment) => attachment.name === THUMBNAIL_FILE_NAME) ?? false;
+      await message.edit({
+        embeds: [{
+          ...embed.toJSON(),
+          color: ENDED_EMBED_COLOR,
+          ...(hasAttachedPreview ? { image: { url: `attachment://${THUMBNAIL_FILE_NAME}` } } : {}),
+        }],
+      });
       logger.info(`Marked Twitch live alert ${messageId} as ended in guild ${guildId}`);
     },
   };
@@ -91,6 +147,10 @@ export async function validateDiscordChannels(
         ) {
           throw new Error("missing View Channel, Send Messages, or Embed Links permission");
         }
+      }
+
+      if (user && "permissionsFor" in channel && !channel.permissionsFor(user)?.has(PermissionFlagsBits.AttachFiles)) {
+        logger.warn(`Discord alert channel ${guild.alertChannelId} lacks Attach Files: previews will be hotlinked and vanish when the alert is marked as ended`);
       }
 
       logger.info(`Validated Discord alert channel ${guild.alertChannelId} for guild ${guild.guildId}`);
