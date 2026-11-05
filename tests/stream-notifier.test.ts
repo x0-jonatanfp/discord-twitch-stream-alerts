@@ -343,4 +343,57 @@ describe("attached preview", () => {
     expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("Attach Files"));
     expect(log.error).not.toHaveBeenCalled();
   });
+
+  describe("attachPreview", () => {
+    const input = { guildId: "guild-1", channelId: "channel-1", messageId: "message-1", thumbnailUrl: stream.thumbnailUrl };
+    const embedJson = { title: "Hello Stream", color: 0x9146ff, image: { url: stream.thumbnailUrl } };
+    const messageWith = (mock: ReturnType<typeof mockClient>, extra: Record<string, unknown> = {}) =>
+      mock.fetchMessage.mockResolvedValueOnce({
+        embeds: [{ toJSON: () => embedJson }], edit: mock.edit, ...extra,
+      } as never);
+
+    it("attaches the real preview to a message that only hotlinks it", async () => {
+      const mock = mockClient();
+      messageWith(mock);
+      const done = await createDiscordStreamNotifier(mock.client, mock.logger, {
+        fetchFn: vi.fn(async () => imageResponse()) as never,
+      }).attachPreview(input);
+      expect(done).toBe(true);
+      const payload = mock.edit.mock.calls[0]?.[0] as Payload;
+      expect(payload.files?.[0]?.name).toBe(THUMBNAIL_FILE_NAME);
+      expect(payload.embeds[0]?.toJSON?.() ?? payload.embeds[0]).toMatchObject({
+        title: "Hello Stream", color: 0x9146ff, image: { url: `attachment://${THUMBNAIL_FILE_NAME}` },
+      });
+    });
+
+    it("does nothing when the message already carries the preview", async () => {
+      const mock = mockClient();
+      messageWith(mock, { attachments: { some: () => true } });
+      const fetchFn = vi.fn(async () => imageResponse());
+      const done = await createDiscordStreamNotifier(mock.client, mock.logger, { fetchFn: fetchFn as never })
+        .attachPreview(input);
+      expect(done).toBe(true);
+      expect(fetchFn).not.toHaveBeenCalled();
+      expect(mock.edit).not.toHaveBeenCalled();
+    });
+
+    it("asks to retry later while Twitch only has the placeholder", async () => {
+      const mock = mockClient();
+      messageWith(mock);
+      const done = await createDiscordStreamNotifier(mock.client, mock.logger, {
+        fetchFn: vi.fn(async () => imageResponse({ url: "https://static-cdn.jtvnw.net/ttv-static/404_preview-1280x720.jpg" })) as never,
+      }).attachPreview(input);
+      expect(done).toBe(false);
+      expect(mock.edit).not.toHaveBeenCalled();
+    });
+
+    it("rejects a message in a channel from another guild", async () => {
+      const mock = mockClient();
+      mock.fetchChannel.mockResolvedValueOnce({
+        isTextBased: () => true, channelId: "channel-1", guildId: "guild-2", messages: { fetch: mock.fetchMessage },
+      } as never);
+      await expect(createDiscordStreamNotifier(mock.client, mock.logger).attachPreview(input))
+        .rejects.toThrow(/does not belong to guild/);
+    });
+  });
 });

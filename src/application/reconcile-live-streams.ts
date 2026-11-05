@@ -26,6 +26,9 @@ export function createLiveStreamReconciler(dependencies: ReconciliationDependenc
   let stateDirty = false;
   let reconcileInFlight: Promise<void> | null = null;
   let stateQueue: Promise<void> = Promise.resolve();
+  // Alerts whose preview is already frozen into the message. Memory only: after
+  // a restart each live alert is checked once more, which is a single API call.
+  const previewSettled = new Set<string>();
 
   function enqueueStateChange(task: () => Promise<void>): Promise<void> {
     const operation = stateQueue.then(task);
@@ -59,6 +62,7 @@ export function createLiveStreamReconciler(dependencies: ReconciliationDependenc
         : { streamId: stream.id, deliveredTo: [], alerts: [] };
 
       await deliverPending(stream, entry, subscribers);
+      await freezePreviews(stream, entry);
       currentState[stream.broadcasterId] = entry;
     }
 
@@ -106,6 +110,27 @@ export function createLiveStreamReconciler(dependencies: ReconciliationDependenc
       return !current || current.id !== entry.streamId;
     });
     await Promise.all(ended.map(([, entry]) => endStream(entry)));
+  }
+
+  /**
+   * Twitch serves the same preview URL for every broadcast of a channel and a
+   * placeholder once it is offline, so a hotlinked image changes (or vanishes)
+   * after the alert is posted. Once a real preview exists it is attached.
+   */
+  async function freezePreviews(stream: LiveStream, entry: LiveStreamStateEntry): Promise<void> {
+    if (!stream.thumbnailUrl) return;
+    for (const alert of entry.alerts) {
+      if (previewSettled.has(alert.messageId)) continue;
+      try {
+        if (await dependencies.notifier.attachPreview({ ...alert, thumbnailUrl: stream.thumbnailUrl })) {
+          previewSettled.add(alert.messageId);
+        }
+      } catch (error) {
+        dependencies.logger.warn(
+          `Could not attach the preview to Twitch alert ${alert.messageId}: ${errorMessage(error)}`,
+        );
+      }
+    }
   }
 
   async function endStream(entry: LiveStreamStateEntry): Promise<void> {
