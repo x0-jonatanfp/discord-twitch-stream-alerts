@@ -127,33 +127,6 @@ export function createDiscordStreamNotifier(
       logger.info(`Posted Twitch live alert for ${stream.broadcasterLogin} in guild ${guildId}`);
       return { messageId: message.id };
     },
-    async attachPreview({ guildId, channelId, messageId, thumbnailUrl }) {
-      const channel = await client.channels.fetch(channelId);
-      if (!channel || !channel.isTextBased() || !("messages" in channel)) {
-        throw new Error(`Configured Discord channel ${channelId} is unavailable or cannot hold messages`);
-      }
-      if (!("guildId" in channel) || channel.guildId !== guildId) {
-        throw new Error(`Configured Discord channel ${channelId} does not belong to guild ${guildId}`);
-      }
-      const message = await channel.messages.fetch(messageId);
-      if (message.attachments?.some((attachment) => attachment.name === THUMBNAIL_FILE_NAME)) return true;
-      const embed = message.embeds[0];
-      if (!embed) return true;
-      const user = client.user;
-      if (user && "permissionsFor" in channel
-        && !channel.permissionsFor(user)?.has(PermissionFlagsBits.AttachFiles)) {
-        logger.warn(`Missing Attach Files permission in channel ${channelId}; cannot freeze the preview of alert ${messageId}`);
-        return true;
-      }
-      const preview = await downloadThumbnail(thumbnailUrl, fetchFn, logger);
-      if (preview.kind !== "ready") return false;
-      await message.edit({
-        embeds: [{ ...embed.toJSON(), image: { url: `attachment://${THUMBNAIL_FILE_NAME}` } }],
-        files: [{ attachment: preview.bytes, name: THUMBNAIL_FILE_NAME }],
-      });
-      logger.info(`Attached the live preview to alert ${messageId} in guild ${guildId}`);
-      return true;
-    },
     async markStreamEnded({ guildId, channelId, messageId }) {
       const channel = await client.channels.fetch(channelId);
       if (!channel || !channel.isTextBased() || !("messages" in channel)) {
@@ -168,16 +141,11 @@ export function createDiscordStreamNotifier(
         logger.warn(`Alert message ${messageId} in channel ${channelId} has no embed to mark as ended`);
         return;
       }
-      // Re-reference the attached preview: the CDN URL Discord stored in the
-      // embed is signed and expires, while attachment:// always resolves.
-      const hasAttachedPreview = message.attachments?.some((attachment) => attachment.name === THUMBNAIL_FILE_NAME) ?? false;
-      await message.edit({
-        embeds: [{
-          ...embed.toJSON(),
-          color: ENDED_EMBED_COLOR,
-          ...(hasAttachedPreview ? { image: { url: `attachment://${THUMBNAIL_FILE_NAME}` } } : {}),
-        }],
-      });
+      // Final edit: only the color changes. No `files` and no `attachments`, so
+      // Discord keeps the preview uploaded when the alert was posted. Never
+      // re-upload here: replacing files on an edit deletes the old one and
+      // leaves the embed pointing at a 404.
+      await message.edit({ embeds: [{ ...embed.toJSON(), color: ENDED_EMBED_COLOR }] });
       logger.info(`Marked Twitch live alert ${messageId} as ended in guild ${guildId}`);
     },
   };
