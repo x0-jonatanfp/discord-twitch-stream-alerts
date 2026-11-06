@@ -315,18 +315,37 @@ describe("attached preview", () => {
     expect(mock.logger.warn).toHaveBeenCalledWith(expect.stringContaining("Attach Files"));
   });
 
-  it("closing an alert only recolors it and never uploads or drops files", async () => {
+  it("closing re-references the posted preview as attachment:// and never uploads or drops files", async () => {
     const mock = mockClient();
-    const image = { url: "https://cdn.discordapp.com/attachments/1/2/preview.jpg?ex=1" };
     mock.fetchMessage.mockResolvedValueOnce({
-      embeds: [{ toJSON: () => ({ title: "Hello Stream", color: 0x9146ff, image }) }],
+      embeds: [{ toJSON: () => ({
+        title: "Hello Stream", color: 0x9146ff,
+        image: { url: "https://cdn.discordapp.com/attachments/1/2/preview.jpg?ex=1&is=2&hm=3", proxy_url: "p", width: 1, height: 1 },
+      }) }],
       edit: mock.edit,
     } as never);
     await createDiscordStreamNotifier(mock.client, mock.logger).markStreamEnded({
       guildId: "guild-1", channelId: "channel-1", messageId: "message-1",
     });
-    // No `files` and no `attachments`: Discord keeps every existing attachment when omitted.
-    expect(mock.edit).toHaveBeenCalledWith({ embeds: [{ title: "Hello Stream", color: 0x4f545c, image }] });
+    // No `files`/`attachments` (Discord keeps them when omitted). Resending the signed CDN
+    // URL would make the file show up as a loose attachment outside the embed.
+    expect(mock.edit).toHaveBeenCalledWith({
+      embeds: [{ title: "Hello Stream", color: 0x4f545c, image: { url: `attachment://${THUMBNAIL_FILE_NAME}` } }],
+    });
+  });
+
+  it("leaves a hotlinked or missing image untouched when closing", async () => {
+    for (const image of [{ url: "https://static-cdn.jtvnw.net/previews-ttv/live_user_x-1280x720.jpg?v=1" }, undefined]) {
+      const mock = mockClient();
+      mock.fetchMessage.mockResolvedValueOnce({
+        embeds: [{ toJSON: () => ({ title: "Hello Stream", color: 0x9146ff, ...(image ? { image } : {}) }) }],
+        edit: mock.edit,
+      } as never);
+      await createDiscordStreamNotifier(mock.client, mock.logger).markStreamEnded({
+        guildId: "guild-1", channelId: "channel-1", messageId: "message-1",
+      });
+      expect(mock.edit).toHaveBeenCalledWith({ embeds: [{ title: "Hello Stream", color: 0x4f545c, ...(image ? { image } : {}) }] });
+    }
   });
 
   it("warns at startup when a channel lacks Attach Files", async () => {

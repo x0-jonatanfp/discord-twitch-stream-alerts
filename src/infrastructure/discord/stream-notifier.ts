@@ -141,11 +141,16 @@ export function createDiscordStreamNotifier(
         logger.warn(`Alert message ${messageId} in channel ${channelId} has no embed to mark as ended`);
         return;
       }
-      // Final edit: only the color changes. No `files` and no `attachments`, so
-      // Discord keeps the preview uploaded when the alert was posted. Never
-      // re-upload here: replacing files on an edit deletes the old one and
-      // leaves the embed pointing at a 404.
-      await message.edit({ embeds: [{ ...embed.toJSON(), color: ENDED_EMBED_COLOR }] });
+      // Final edit: only the color changes; no `files` and no `attachments`, so
+      // Discord keeps the preview uploaded when the alert was posted. The image
+      // must be re-referenced as attachment://: resending the signed CDN URL
+      // that Discord returns makes the file appear as a loose attachment next to
+      // the embed. Never re-upload here: replacing files on an edit deletes the
+      // old one and leaves the embed pointing at a 404.
+      const ended = { ...embed.toJSON(), color: ENDED_EMBED_COLOR };
+      await message.edit({
+        embeds: [isPostedPreview(ended.image?.url) ? { ...ended, image: { url: `attachment://${THUMBNAIL_FILE_NAME}` } } : ended],
+      });
       logger.info(`Marked Twitch live alert ${messageId} as ended in guild ${guildId}`);
     },
   };
@@ -192,6 +197,17 @@ export async function validateDiscordChannels(
         `Discord alert channel ${guild.alertChannelId} for guild ${guild.guildId} is not usable: ${errorMessage(error)}`,
       );
     }
+  }
+}
+
+/** True when the embed image is the preview file uploaded with the alert (a Discord CDN attachment). */
+function isPostedPreview(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const { pathname } = new URL(url);
+    return pathname.includes("/attachments/") && pathname.endsWith(`/${THUMBNAIL_FILE_NAME}`);
+  } catch {
+    return false;
   }
 }
 
